@@ -1,4 +1,4 @@
-# TUM Introduction to ROS 2026 — Autonomous Driving Project
+# Autonomous Driving Project
 
 Autonomous car driving a fixed ~785 m urban route in a Unity simulator via ROS 2,
 obeying traffic lights, avoiding other vehicles, and handling a vehicle-merge and
