@@ -43,7 +43,7 @@ below, not ROS-specific. Everything else — `rclcpp`, `cv_bridge`, `tf2_ros`,
 ```bash
 mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws
-git clone <THIS_REPO_URL> tmp_clone
+git clone https://github.com/ly836669642-lgtm/project.git tmp_clone
 mv tmp_clone/src/* src/
 mv tmp_clone/.gitignore .
 rm -rf tmp_clone
