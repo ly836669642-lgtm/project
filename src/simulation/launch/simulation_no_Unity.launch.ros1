@@ -1,0 +1,5 @@
+<launch>
+      <node pkg="simulation" type="JSON_param_reader" name="JSON_param_reader" output="screen"/>
+      <node pkg="simulation" type="unity_TCP_stream_receiver" name="Unity_ROS_message_Rx" output="screen"/>
+      <node pkg="simulation" type="ROS_command_transmitter" name="ROS_Unity_command_Tx" output="screen"/>
+</launch>

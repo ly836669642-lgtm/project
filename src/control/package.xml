@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>control</name>
+  <version>0.1.0</version>
+  <description>Trajectory-tracking controller: Pure Pursuit steering plus proportional speed control, commanding the simulation vehicle.</description>
+  <maintainer email="smpss95159@gmail.com">ll</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>project_interfaces</depend>
+  <depend>std_srvs</depend>
+  <depend>simulation</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

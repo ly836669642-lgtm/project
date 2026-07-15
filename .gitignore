@@ -1,0 +1,18 @@
+# colcon build artifacts
+build/
+install/
+log/
+
+# Unity simulator binary - too large for a normal git remote (~940 MB) and
+# identical for every student; download it separately (see README.md).
+src/simulation/unity_sim/Build_Ubuntu/
+src/simulation/unity_sim/Build_v1.2/
+
+# editor / OS cruft
+.vscode/
+*.swp
+.DS_Store
+
+# stray Python bytecode caches (e.g. under launch/)
+__pycache__/
+*.pyc

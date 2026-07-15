@@ -1,0 +1,94 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Tree Height: 500
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Plane Cell Count: 100
+      Cell Size: 10
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Marker Scale: 3
+    - Class: rviz_default_plugins/PointCloud2
+      Name: DepthCloud
+      Enabled: true
+      Topic:
+        Value: /perception/pcl/points
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+    - Class: rviz_default_plugins/Path
+      Name: PlannedRoute
+      Enabled: true
+      Topic:
+        Value: /planning/route
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Line Style: Billboards
+      Line Width: 1.5
+      Color: 25; 255; 25
+    - Class: rviz_default_plugins/Map
+      Name: ProjectedMap
+      Enabled: true
+      Topic:
+        Value: /perception/octomap/projected_map
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Color Scheme: map
+    - Class: rviz_default_plugins/Image
+      Name: RGBLeft
+      Enabled: true
+      Topic:
+        Value: /OurCar/Sensors/RGBCameraLeft/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+    - Class: rviz_default_plugins/Image
+      Name: Semantic
+      Enabled: true
+      Topic:
+        Value: /OurCar/Sensors/SemanticCamera/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+  Global Options:
+    Fixed Frame: world
+    Frame Rate: 30
+    Background Color: 48; 48; 48
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/SetInitialPose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Orbit
+      Target Frame: OurCar/Center
+      Distance: 40
+      Pitch: 0.6
+      Yaw: 3.14
+Window Geometry:
+  Height: 900
+  Width: 1400

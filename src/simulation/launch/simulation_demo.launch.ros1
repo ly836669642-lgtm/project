@@ -1,0 +1,42 @@
+<launch>
+     
+      <node pkg="simulation" type="JSON_param_reader" name="JSON_param_reader" output="screen"/>
+      <node pkg="simulation" type="unity_TCP_stream_receiver" name="Unity_ROS_message_Rx" output="screen"/>
+      <node pkg="simulation" type="ROS_command_transmitter" name="ROS_Unity_command_Tx" output="screen"/>
+
+
+
+      <!-- define the tf tree manually -->
+       <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_nominal_center"  args="0 0 -0.7180116 0 0 0 OurCar/INS OurCar/Center" />
+      <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_sensors"  args="0.8199998 0 1.269 0 0 0 OurCar/Center OurCar/Sensors/SensorBase " />
+      <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_segmentation_camera"  args="0 0 0 0.5 -0.5 0.5 -0.5 OurCar/Sensors/SensorBase OOurCar/Sensors/SegCamera " />
+
+      <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_depth_camera"  args="0 0 0 0.5 -0.5 0.5 -0.5 OurCar/Sensors/SensorBase OurCar/Sensors/DepthCamera " />
+
+      <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_RGB_camera_left"  args="0 0.2 0 0.5 -0.5 0.5 -0.5 OurCar/Sensors/SensorBase OurCar/Sensors/RGBCameraLeft " />
+
+      <node pkg="tf2_ros" type="static_transform_publisher"
+            name="tf_RGB_camera_right"  args="0 -0.2 0 0.5 -0.5 0.5 -0.5 OurCar/Sensors/SensorBase OurCar/Sensors/RGBCameraRight " />
+
+      <!-- visualize the depth cam-->
+      <node pkg="nodelet" type="nodelet" name="nodelet_manager" args="manager" />
+  
+      <node pkg="nodelet" type="nodelet" name="depth_image_processing"
+            args="load depth_image_proc/point_cloud_xyz nodelet_manager">
+            <remap from="camera_info" to="/Unity_ROS_message_Rx/OurCar/Sensors/DepthCamera/camera_info"/>
+            <remap from="image_rect" to="/Unity_ROS_message_Rx/OurCar/Sensors/DepthCamera/image_raw"/>
+            <remap from="points" to="/perception/pcl/points"/>
+      </node>
+
+      <!-- launch the visualization -->
+      <node pkg="rviz" type="rviz" name="rviz" args="-d $(find simulation)/rviz/visualization.rviz" />
+
+      <node pkg="simulation" type="run_unity.sh" name="unity_sim" output="screen" />
+
+
+</launch>
