@@ -8,6 +8,7 @@
 //   /planning/route        (nav_msgs/Path, for RViz)
 //   /planning/current_goal (geometry_msgs/PoseStamped, live goal selection)
 
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -247,10 +248,11 @@ private:
   // typically 6-12 m in / 4 m out; 10 m is only the fallback) so the
   // published trajectory itself goes around a static obstacle.
   void OnDetour(const std_msgs::msg::Float32MultiArray& m) {
+    const auto t_start = std::chrono::steady_clock::now();
     if (base_pts_.empty()) return;
     if (m.data.size() < 3 || m.data[1] - m.data[0] < 1.0f) {
       RCLCPP_INFO(get_logger(), "Detour cleared, restoring base route");
-      Publish(base_pts_);
+      Publish(base_pts_, "detour-clear");
       return;
     }
     const double s0 = m.data[0], s1 = m.data[1], off = m.data[2];
@@ -275,10 +277,17 @@ private:
       pts[i].x += -dy / n * off * ramp;
       pts[i].y += dx / n * off * ramp;
     }
+    // Own cost of this callback before Publish() - arc[] rebuild plus the
+    // window shift loop, both O(n) over the whole route today (see
+    // Publish() for the curvature/speed-profile side of the O(n) cost).
+    const double window_ms = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now() - t_start)
+                                 .count();
     RCLCPP_INFO(get_logger(),
-                "Replanned with detour: s=[%.0f, %.0f] offset %+.1f m",
-                s0, s1, off);
-    Publish(pts);
+                "Replanned with detour: s=[%.0f, %.0f] offset %+.1f m "
+                "(arc rebuild + window shift: %.3f ms over %zu points)",
+                s0, s1, off, window_ms, pts.size());
+    Publish(pts, "detour");
   }
 
   std::vector<Pt> LoadWaypoints(const std::string& file) {
@@ -373,7 +382,8 @@ private:
     return denom < 1e-9 ? 0.0 : 2.0 * std::abs(area2) / denom;
   }
 
-  void Publish(const std::vector<Pt>& pts) {
+  void Publish(const std::vector<Pt>& pts, const char* reason = "startup") {
+    const auto t_start = std::chrono::steady_clock::now();
     const double v_max = get_parameter("v_max").as_double();
     const double a_lat = get_parameter("a_lat_max").as_double();
     const double a_acc = get_parameter("a_accel").as_double();
@@ -440,8 +450,13 @@ private:
     }
     traj_pub_->publish(traj);
     path_pub_->publish(path);
+    const double publish_ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - t_start)
+                                  .count();
     RCLCPP_INFO(get_logger(),
-                "Published trajectory: %zu points, v_max %.1f m/s", n, v_max);
+                "Published trajectory (%s): %zu points, v_max %.1f m/s, "
+                "%.3f ms",
+                reason, n, v_max, publish_ms);
   }
 
   std::vector<Pt> base_pts_;
