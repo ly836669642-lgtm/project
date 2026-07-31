@@ -39,6 +39,7 @@
 // trajectory so controller, planner, and guard share exact units.
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <limits>
@@ -326,12 +327,18 @@ private:
   enum class Mode { kNormal, kVerify, kDetour, kHold };
 
   void RebuildArcTable() {
+    const auto t_start = std::chrono::steady_clock::now();
     const auto& pts = traj_.points;
     arc_.assign(pts.size(), 0.0);
     for (size_t i = 1; i < pts.size(); ++i)
       arc_[i] = arc_[i - 1] + std::hypot(pts[i].x - pts[i - 1].x,
                                          pts[i].y - pts[i - 1].y);
     RebuildStopArcs();
+    const double ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t_start)
+                          .count();
+    RCLCPP_INFO(get_logger(), "Arc table rebuilt: %zu points, %.3f ms",
+                pts.size(), ms);
   }
 
   // Project the world-frame stop anchors onto the current route. Runs on
