@@ -4,7 +4,11 @@ TUM "Introduction to ROS" 2026 — Autonomous Driving group project.
 
 This document explains the architecture, design decisions, external
 dependencies, known limitations, and results of our submission. See the
-[repository README](../README.md) for install/build/run instructions.
+[repository README](../README.md) for install/build/run instructions, and
+[`DEEP_DIVE.md`](DEEP_DIVE.md) for the full engineering-detail version of
+everything below (every algorithm, every parameter's exact value and the
+reasoning behind it, a complete bug history, and the performance/testing
+methodology).
 
 ## 1. System Overview
 
