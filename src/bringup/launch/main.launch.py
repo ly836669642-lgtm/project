@@ -169,6 +169,25 @@ def generate_launch_description():
         ),
 
         # --- Perception: point cloud -> OctoMap occupancy map ---
+        # projected_map is height-banded to 0.08-0.35 m: the corridor guard's
+        # own z_min=0.35 (see perception/obstacle_guard_node.cpp) deliberately
+        # ignores anything below that as road/curb noise, so this band is
+        # exactly the low-obstacle gap the live per-frame corridor scan can
+        # never see. obstacle_guard consumes projected_map as a
+        # supplementary, accumulated-over-time cross-check
+        # (see map_tight_distance) - not the primary sensor.
+        #
+        # filter_ground_plane is deliberately left OFF: octomap_server's
+        # RANSAC ground filter needs a base_frame_id ("base_footprint" by
+        # default) that doesn't exist in this project's TF tree (frames are
+        # named OurCar/...) - enabling it without that frame just errors on
+        # every cloud ("Transform error for ground plane filter") without
+        # actually filtering anything. Measured empirically instead: the
+        # 0.08-0.35 m height band alone already keeps the map sparse (see
+        # commit notes / run logs) - the flat road surface's own z-noise
+        # apparently never reaches into that band, so RANSAC ground removal
+        # isn't needed here. filter_speckles (single-voxel noise) is
+        # independent of base_frame_id and works fine.
         Node(
             package='octomap_server',
             executable='octomap_server_node',
@@ -178,6 +197,9 @@ def generate_launch_description():
                 'resolution': 0.4,
                 'frame_id': 'world',
                 'sensor_model.max_range': 50.0,
+                'filter_speckles': True,
+                'occupancy_min_z': 0.08,
+                'occupancy_max_z': 0.35,
             }],
             remappings=[('cloud_in', '/perception/pcl/points')],
         ),

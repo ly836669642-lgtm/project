@@ -10,6 +10,11 @@
 //   /perception/overtake_right_distance  corridor shifted right
 // Every point is classified against its CLOSEST path segment (no early
 // exit), and arc distances use true cumulative segment lengths.
+//
+// Also cross-checks the accumulated OctoMap projection (height-banded to
+// the curb range the live cloud's z_min filter ignores - see PublishMapTight)
+// and publishes the nearest hit as /perception/map_tight_distance,
+// supplementary to (never a substitute for) the live tight corridor above.
 
 #include <cmath>
 #include <limits>
@@ -17,6 +22,7 @@
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <project_interfaces/msg/trajectory.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -55,6 +61,12 @@ public:
     declare_parameter("z_max", 3.0);    // m world height: below overpasses
     declare_parameter("min_range", 0.2);  // m, absolute minimum
     declare_parameter("stride", 3);     // point decimation (1/stride^2)
+    declare_parameter("map_stale_after", 3.0);  // s - see PublishMapTight:
+                                        // octomap_server has no respawn=True
+                                        // (unlike the two bridge nodes), and
+                                        // a frozen map_ would otherwise keep
+                                        // looking "fresh" forever just from
+                                        // this node's own republish cadence
 
     wide_pub_ = create_publisher<std_msgs::msg::Float32>(
         "/perception/obstacle_distance", 10);
@@ -64,6 +76,8 @@ public:
         "/perception/overtake_left_distance", 10);
     ot_right_pub_ = create_publisher<std_msgs::msg::Float32>(
         "/perception/overtake_right_distance", 10);
+    map_tight_pub_ = create_publisher<std_msgs::msg::Float32>(
+        "/perception/map_tight_distance", 10);
 
     auto latched = rclcpp::QoS(1).transient_local().reliable();
     traj_sub_ = create_subscription<project_interfaces::msg::Trajectory>(
@@ -83,6 +97,12 @@ public:
         "/perception/pcl/points", rclcpp::SensorDataQoS(),
         [this](sensor_msgs::msg::PointCloud2::SharedPtr msg) {
           OnCloud(*msg);
+        });
+    map_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        "/perception/octomap/projected_map", latched,
+        [this](nav_msgs::msg::OccupancyGrid::SharedPtr m) {
+          map_ = *m;
+          map_received_ = true;
         });
   }
 
@@ -239,6 +259,108 @@ private:
       }
     }
     PublishAll(main_b, tight_b, left_b, right_b);
+    PublishMapTight(nearest_, end);
+  }
+
+  // Cross-check the accumulated OctoMap projection (height-banded to
+  // 0.08-0.35 m in the launch file - see the comment there) for low
+  // obstacles the live corridor's z_min=0.35 filter deliberately ignores
+  // (curbs measured 0.25-0.27 m, see the z_min comment above). This is
+  // SUPPLEMENTARY ONLY: an infinite or unavailable result must never by
+  // itself block driving - it can only ADD caution on top of the live
+  // tight-corridor check (see kVerify in control/pure_pursuit_node.cpp,
+  // which ANDs this in, never ORs it out).
+  //
+  // Freshness is checked against map_.header.stamp (the underlying scan
+  // time octomap_server itself sets), NOT just "have we ever received a
+  // message" - octomap_server has no respawn=True, so if it dies or hangs,
+  // map_received_ alone would stay true forever and this node would keep
+  // republishing a verdict against a frozen snapshot every tick, making a
+  // permanently-stale map look "fresh" to every downstream staleness check
+  // that only looks at OUR publish timestamp. That would defeat the whole
+  // fail-open design and could turn one stale/false-positive occupied cell
+  // into a permanent, un-clearable detour veto (kVerify -> both sides
+  // blocked -> kHold -> kNormal -> EngageDetour -> kVerify -> blocked again
+  // by the same frozen cell, forever). Checking the scan's OWN timestamp
+  // instead closes that: a dead/hung octomap_server degrades this signal
+  // to "no data" (+inf) like any other absent input.
+  void PublishMapTight(size_t lo, size_t hi) {
+    std_msgs::msg::Float32 out;
+    out.data = std::numeric_limits<float>::infinity();
+    const double stale_after = get_parameter("map_stale_after").as_double();
+    const bool map_data_fresh =
+        map_received_ &&
+        (now() - rclcpp::Time(map_.header.stamp)).seconds() <= stale_after;
+    if (map_data_fresh && hi > lo + 1 && hi <= traj_.points.size() &&
+        map_.info.resolution > 1e-6) {
+      const auto& pts = traj_.points;
+      const double tight_w = get_parameter("tight_half_width").as_double();
+      const double res = map_.info.resolution;
+      const double ox = map_.info.origin.position.x;
+      const double oy = map_.info.origin.position.y;
+      const int w = static_cast<int>(map_.info.width);
+      const int h = static_cast<int>(map_.info.height);
+
+      // Bounding box of the trajectory window, padded by the tight
+      // half-width - scanning only this box (not the whole accumulated
+      // map) keeps this cheap regardless of how large the map has grown.
+      double bx_lo = pts[lo].x, bx_hi = pts[lo].x;
+      double by_lo = pts[lo].y, by_hi = pts[lo].y;
+      for (size_t i = lo; i <= hi; ++i) {
+        bx_lo = std::min(bx_lo, pts[i].x);
+        bx_hi = std::max(bx_hi, pts[i].x);
+        by_lo = std::min(by_lo, pts[i].y);
+        by_hi = std::max(by_hi, pts[i].y);
+      }
+      bx_lo -= tight_w + res;
+      bx_hi += tight_w + res;
+      by_lo -= tight_w + res;
+      by_hi += tight_w + res;
+      const int col_lo = std::max(0, static_cast<int>((bx_lo - ox) / res));
+      const int col_hi =
+          std::min(w - 1, static_cast<int>((bx_hi - ox) / res));
+      const int row_lo = std::max(0, static_cast<int>((by_lo - oy) / res));
+      const int row_hi =
+          std::min(h - 1, static_cast<int>((by_hi - oy) / res));
+
+      double best_arc = 1e18;
+      for (int row = row_lo; row <= row_hi; ++row) {
+        for (int col = col_lo; col <= col_hi; ++col) {
+          const size_t idx = static_cast<size_t>(row) * w + col;
+          if (idx >= map_.data.size()) continue;
+          if (map_.data[idx] < 50) continue;  // free or unknown (-1)
+          const double wx = ox + (col + 0.5) * res;
+          const double wy = oy + (row + 0.5) * res;
+
+          // Same closest-segment classification as the live cloud check,
+          // over the same [lo, hi) window - no coarse-to-fine needed here
+          // since only OCCUPIED cells reach this inner loop, and
+          // ground/speckle filtering keeps that count small.
+          double best_d2 = 1e18, best_lat = 0.0, best_seg_arc = 0.0;
+          for (size_t i = lo; i < hi; ++i) {
+            const double ax = pts[i].x, ay = pts[i].y;
+            const double sx = pts[i + 1].x - ax, sy = pts[i + 1].y - ay;
+            const double L2 = sx * sx + sy * sy;
+            if (L2 < 1e-9) continue;
+            const double L = std::sqrt(L2);
+            double t = std::clamp(
+                ((wx - ax) * sx + (wy - ay) * sy) / L2, 0.0, 1.0);
+            const double rx = wx - (ax + t * sx), ry = wy - (ay + t * sy);
+            const double d2 = rx * rx + ry * ry;
+            if (d2 < best_d2) {
+              best_d2 = d2;
+              best_lat = (sx * ry - sy * rx) / L;
+              best_seg_arc = (arc_[i] - arc_[lo]) + t * L;
+            }
+          }
+          if (best_d2 > 1e17) continue;
+          if (std::abs(best_lat) < tight_w && best_seg_arc < best_arc)
+            best_arc = best_seg_arc;
+        }
+      }
+      if (best_arc < 1e17) out.data = static_cast<float>(best_arc);
+    }
+    map_tight_pub_->publish(out);
   }
 
   void UpdateNearest() {
@@ -261,6 +383,8 @@ private:
   std::vector<double> arc_;
   std::optional<geometry_msgs::msg::PoseStamped> pose_;
   size_t nearest_{0};
+  nav_msgs::msg::OccupancyGrid map_;
+  bool map_received_{false};
 
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
@@ -268,9 +392,11 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr tight_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr ot_left_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr ot_right_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr map_tight_pub_;
   rclcpp::Subscription<project_interfaces::msg::Trajectory>::SharedPtr traj_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
 };
 
 int main(int argc, char** argv) {

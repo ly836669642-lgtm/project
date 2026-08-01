@@ -5,6 +5,11 @@
 //              /perception/obstacle_distance      (1.4 m corridor, normal)
 //              /perception/tight_distance         (1.1 m corridor, maneuvers)
 //              /perception/overtake_{left,right}_distance (side corridors)
+//              /perception/map_tight_distance     (accumulated-OctoMap
+//                                  cross-check, curb-height band the live
+//                                  corridor's z_min ignores - supplementary
+//                                  only, see kVerify in
+//                                  RunObstacleStateMachine)
 //              /perception/traffic_light          (facing signal phase)
 // Publishes:   /car_command       (simulation/VehicleControl, 50 Hz)
 //              /planning/detour   (std_msgs/Float32MultiArray
@@ -128,6 +133,21 @@ public:
                                                  // still gates the path
     declare_parameter("static_wait", 8.0);       // s stopped before an
                                                  // obstacle counts as parked
+    declare_parameter("map_only_hold_cap", 25.0); // s - a detour blocked
+                                                 // ONLY by the supplementary
+                                                 // OctoMap cross-check (live
+                                                 // corridor itself says
+                                                 // clear) can hold for at
+                                                 // most this long before we
+                                                 // give up on the map and
+                                                 // fall back to the live-
+                                                 // sensor-only judgement -
+                                                 // guarantees a persistent
+                                                 // false-positive map cell
+                                                 // can only ever add a
+                                                 // bounded delay, never an
+                                                 // infinite hang (see
+                                                 // map_only_block_since_)
     declare_parameter("traffic_settle", 10.0);   // s an obstacle must stay
                                                  // put after last being SEEN
                                                  // moving before any detour;
@@ -321,6 +341,12 @@ public:
         [this](std_msgs::msg::Float32::SharedPtr m) {
           right_dist_ = m->data;
           right_stamp_ = now();
+        });
+    map_tight_sub_ = create_subscription<std_msgs::msg::Float32>(
+        "/perception/map_tight_distance", 10,
+        [this](std_msgs::msg::Float32::SharedPtr m) {
+          map_tight_dist_ = m->data;
+          map_tight_stamp_ = now();
         });
     light_sub_ = create_subscription<project_interfaces::msg::TrafficLight>(
         "/perception/traffic_light", 10,
@@ -639,8 +665,45 @@ private:
         return true;
       }
       const double horizon = std::min(28.0, detour_end_ - s_now);
-      const bool clear = fresh && (!std::isfinite(tight_dist_) ||
-                                   tight_dist_ > horizon);
+      // Supplementary OctoMap cross-check: catches low obstacles (curbs)
+      // the live corridor's z_min filter can't see (map_tight_distance in
+      // obstacle_guard_node.cpp). Only ever ADDS caution - a stale or
+      // absent map reading never blocks a detour the live sensor already
+      // verified clear; only a FRESH (post-replan) map hit inside the
+      // horizon can veto it.
+      const bool map_fresh = map_tight_stamp_ > state_since_;
+      const bool map_hit = map_fresh && std::isfinite(map_tight_dist_) &&
+                           map_tight_dist_ <= horizon;
+      const bool live_hit =
+          std::isfinite(tight_dist_) && tight_dist_ <= horizon;
+      // Bounded trust: if the map is the ONLY thing blocking (live sensor
+      // itself says clear), that can hold for at most map_only_hold_cap
+      // seconds before we give up on the map and fall back to the live-
+      // sensor-only judgement this code used before the map check existed.
+      // Together with the staleness check in PublishMapTight, this
+      // guarantees a stale or persistently-false-positive map cell can
+      // only ever add a bounded delay here, never an infinite hang.
+      if (map_hit && !live_hit) {
+        if (!map_only_block_since_.has_value()) map_only_block_since_ = now();
+      } else {
+        map_only_block_since_.reset();
+      }
+      const bool map_stuck_too_long =
+          map_only_block_since_.has_value() &&
+          (now() - *map_only_block_since_).seconds() >
+              get_parameter("map_only_hold_cap").as_double();
+      const bool map_clear = !map_hit || map_stuck_too_long;
+      if (map_hit && !map_clear) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+                             "Detour path blocked by mapped low obstacle "
+                             "(curb?) at %.1f m ahead", map_tight_dist_);
+      } else if (map_hit && map_stuck_too_long) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000,
+                             "Mapped low obstacle blocked this detour for "
+                             "over %.0f s - trusting the live sensor only",
+                             get_parameter("map_only_hold_cap").as_double());
+      }
+      const bool clear = fresh && map_clear && !live_hit;
       if (clear) {
         mode_ = Mode::kDetour;
         RCLCPP_INFO(get_logger(), "Detour path verified clear - going");
@@ -1210,10 +1273,19 @@ private:
   double tight_dist_{std::numeric_limits<double>::infinity()};
   double left_dist_{std::numeric_limits<double>::infinity()};
   double right_dist_{std::numeric_limits<double>::infinity()};
+  // supplementary OctoMap cross-check (perception/obstacle_guard_node.cpp) -
+  // never gates normal driving, only ANDed into kVerify's detour-clear
+  // check (see RunObstacleStateMachine); infinite/stale => no objection
+  double map_tight_dist_{std::numeric_limits<double>::infinity()};
+  // set the first tick the map (not the live sensor) is the sole reason a
+  // detour is blocked; cleared the moment that stops being true. Bounds
+  // the map veto's worst case to map_only_hold_cap seconds - see kVerify.
+  std::optional<rclcpp::Time> map_only_block_since_;
   rclcpp::Time obstacle_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time tight_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time left_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time right_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time map_tight_stamp_{0, 0, RCL_ROS_TIME};
   std::optional<rclcpp::Time> blocked_since_;
   double blocked_gap_{0.0};
   std::deque<std::pair<rclcpp::Time, double>> obs_track_;
@@ -1259,6 +1331,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr tight_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr left_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr right_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr map_tight_sub_;
   rclcpp::Subscription<project_interfaces::msg::TrafficLight>::SharedPtr
       light_sub_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_srv_;

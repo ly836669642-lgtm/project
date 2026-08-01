@@ -13,6 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(project_interfaces REQUIRED)
 find_package(cv_bridge REQUIRED)
@@ -20,7 +21,7 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 
 add_executable(obstacle_guard_node src/obstacle_guard_node.cpp)
 ament_target_dependencies(obstacle_guard_node
-  rclcpp sensor_msgs std_msgs geometry_msgs tf2_ros project_interfaces)
+  rclcpp sensor_msgs std_msgs geometry_msgs nav_msgs tf2_ros project_interfaces)
 
 add_executable(traffic_light_node src/traffic_light_node.cpp)
 ament_target_dependencies(traffic_light_node
