@@ -153,8 +153,8 @@ Example: `ros2 launch bringup main.launch.py use_rviz:=false`
 | `control` | `pure_pursuit_node`: pure-pursuit path tracking + ACC-style gap control, traffic-light stop/go state machine, detour/verify state machine |
 | `bringup` | Single launch file (`main.launch.py`) + static TF tree + RViz config wiring everything above together |
 
-A full architecture write-up with figures, the ROS graph, and results is in the
-separate project documentation (not this README).
+A full architecture write-up with figures, the ROS graph, and results is in
+[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md).
 
 ## 7. Required ROS 2 elements implemented ourselves
 
