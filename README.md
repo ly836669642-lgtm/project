@@ -6,12 +6,34 @@ an emergency-brake event, without leaving the road.
 
 Tested on **Ubuntu 24.04.3 LTS** with **ROS 2 Jazzy Jalisco**.
 
-## 1. Install dependencies
+## 1. Get the code
 
-On a completely fresh Ubuntu 24.04 machine you can run the bundled script to
-install ROS 2 Jazzy and every apt dependency below in one go:
+On a completely fresh machine, `git` isn't installed yet either — grab it first:
 
 ```bash
+sudo apt update && sudo apt install -y git unzip
+```
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws
+git clone https://github.com/ly836669642-lgtm/project.git tmp_clone
+mv tmp_clone/src/* src/
+mv tmp_clone/.gitignore tmp_clone/install_ros2_jazzy.sh .
+rm -rf tmp_clone
+```
+
+(Or, if you cloned this repo directly as `~/ros2_ws`, skip this step — the repo's
+`src/` is already your workspace's `src/`, and `install_ros2_jazzy.sh` is already
+sitting right there in `~/ros2_ws`.)
+
+## 2. Install dependencies
+
+Now that the repo (and `install_ros2_jazzy.sh`) is on disk, you can run the
+bundled script to install ROS 2 Jazzy and every apt dependency below in one go:
+
+```bash
+cd ~/ros2_ws
 bash install_ros2_jazzy.sh
 ```
 
@@ -23,7 +45,6 @@ Everything else this project needs beyond `ros-jazzy-desktop`:
 ```bash
 sudo apt update
 sudo apt install \
-  git unzip \
   python3-colcon-common-extensions \
   ros-jazzy-depth-image-proc \
   ros-jazzy-octomap-server \
@@ -34,23 +55,10 @@ sudo apt install \
 `ros-jazzy-octomap-server` are the only packages actually missing from a bare
 `ros-jazzy-desktop` install; `libopencv-dev` is already pulled in transitively
 by `ros-jazzy-desktop` but is listed explicitly since `perception` depends on it
-directly. `git`/`unzip` are for cloning this repo and unpacking the Unity build
-below, not ROS-specific. Everything else — `rclcpp`, `cv_bridge`, `tf2_ros`,
-`rviz2`, `rosidl_default_generators`, etc. — already ships with `ros-jazzy-desktop`.)
-
-## 2. Get the code
-
-```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws
-git clone https://github.com/ly836669642-lgtm/project.git tmp_clone
-mv tmp_clone/src/* src/
-mv tmp_clone/.gitignore .
-rm -rf tmp_clone
-```
-
-(Or, if you cloned this repo directly as `~/ros2_ws`, skip this step — the repo's
-`src/` is already your workspace's `src/`.)
+directly. `git`/`unzip` (installed in step 1 above) are for cloning this repo and
+unpacking the Unity build below, not ROS-specific. Everything else — `rclcpp`,
+`cv_bridge`, `tf2_ros`, `rviz2`, `rosidl_default_generators`, etc. — already ships
+with `ros-jazzy-desktop`.)
 
 ## 3. Get the Unity simulator binary
 
