@@ -5,6 +5,7 @@
 //   /planning/trajectory  (project_interfaces/Trajectory, for the controller)
 //   /planning/route       (nav_msgs/Path, for RViz)
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -114,7 +115,19 @@ private:
     ApplyLaneOffset(&pts);
     Smooth(&pts, get_parameter("smooth_iterations").as_int());
     base_pts_ = pts;
+    BuildBaseArcTable();
     Publish(base_pts_);
+  }
+
+  // base_pts_ never changes after Plan(), so its arc-length table doesn't
+  // either - build it once here instead of redoing it on every detour
+  // request, which is what made OnDetour O(n) before this existed.
+  void BuildBaseArcTable() {
+    base_arc_.assign(base_pts_.size(), 0.0);
+    for (size_t i = 1; i < base_pts_.size(); ++i)
+      base_arc_[i] = base_arc_[i - 1] +
+                     std::hypot(base_pts_[i].x - base_pts_[i - 1].x,
+                                base_pts_[i].y - base_pts_[i - 1].y);
   }
 
   // Local replan requested by the controller: shift the base route
@@ -133,15 +146,17 @@ private:
     const double rin = m.data.size() > 3 ? m.data[3] : 10.0;
     const double rout = m.data.size() > 4 ? m.data[4] : 10.0;
     std::vector<Pt> pts = base_pts_;
-    std::vector<double> arc(pts.size(), 0.0);
-    for (size_t i = 1; i < pts.size(); ++i)
-      arc[i] = arc[i - 1] + std::hypot(pts[i].x - pts[i - 1].x,
-                                       pts[i].y - pts[i - 1].y);
-    for (size_t i = 0; i < pts.size(); ++i) {
-      if (arc[i] < s0 || arc[i] > s1) continue;
-      double ramp = std::min({(arc[i] - s0) / std::max(rin, 1.0), 1.0,
-                              (s1 - arc[i]) / std::max(rout, 1.0)});
-      ramp = std::clamp(ramp, 0.0, 1.0);
+    // base_arc_ is sorted (strictly increasing) and fixed, so the window
+    // bounds are a binary search into it instead of a linear scan that
+    // touches every point in the route to find the ones inside [s0, s1].
+    const auto lo = std::lower_bound(base_arc_.begin(), base_arc_.end(), s0);
+    const auto hi = std::upper_bound(base_arc_.begin(), base_arc_.end(), s1);
+    for (auto it = lo; it != hi; ++it) {
+      const size_t i = static_cast<size_t>(it - base_arc_.begin());
+      const double ramp = std::clamp(
+          std::min({(base_arc_[i] - s0) / std::max(rin, 1.0), 1.0,
+                    (s1 - base_arc_[i]) / std::max(rout, 1.0)}),
+          0.0, 1.0);
       const Pt& a = base_pts_[i == 0 ? 0 : i - 1];
       const Pt& b = base_pts_[std::min(i + 1, base_pts_.size() - 1)];
       const double dx = b.x - a.x, dy = b.y - a.y;
@@ -151,16 +166,18 @@ private:
       pts[i].x += -dy / n * off * ramp;
       pts[i].y += dx / n * off * ramp;
     }
-    // Own cost of this callback before Publish() - arc[] rebuild plus the
-    // window shift loop, both O(n) over the whole route today (see
-    // Publish() for the curvature/speed-profile side of the O(n) cost).
+    // Own cost of this callback before Publish(): binary search + the
+    // window shift loop, now O(log n + k) with k = points inside [s0, s1]
+    // instead of the old O(n) arc rebuild + full scan (see Publish() for
+    // the remaining O(n) curvature/speed-profile/message-build cost).
     const double window_ms = std::chrono::duration<double, std::milli>(
                                  std::chrono::steady_clock::now() - t_start)
                                  .count();
     RCLCPP_INFO(get_logger(),
                 "Replanned with detour: s=[%.0f, %.0f] offset %+.1f m "
-                "(arc rebuild + window shift: %.3f ms over %zu points)",
-                s0, s1, off, window_ms, pts.size());
+                "(window search + shift: %.3f ms over %ld/%zu points)",
+                s0, s1, off, window_ms, static_cast<long>(hi - lo),
+                pts.size());
     Publish(pts, "detour");
   }
 
@@ -334,6 +351,7 @@ private:
   }
 
   std::vector<Pt> base_pts_;
+  std::vector<double> base_arc_;
   rclcpp::Publisher<project_interfaces::msg::Trajectory>::SharedPtr traj_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
