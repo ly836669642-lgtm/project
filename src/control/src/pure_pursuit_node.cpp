@@ -17,8 +17,12 @@
 // Decision design follows normal traffic behaviour, per project owner:
 //   * Anything blocking the lane ahead: decelerate early and stop at a
 //     full safety distance (obstacle_standoff, 13 m). NEVER reverse.
-//   * A suddenly appearing vehicle (merging / braking NPC) never changes
-//     the plan - the car simply keeps its distance and waits.
+//   * A suddenly appearing vehicle merging in gets no special case - it
+//     is just followed, like any other traffic. One that crosses and
+//     brakes hard directly ahead (task Event II) is not a "keep
+//     following" case: a dedicated emergency-stop check (top of
+//     Control(), ahead of every other decision) commands full brake the
+//     instant the required deceleration exceeds a comfort profile.
 //   * An obstacle whose WORLD arc position stays constant while we watch
 //     it (2.5 s tracked, or a full static_wait once stopped) is treated
 //     as parked; then, if there is room, the road is straight, and no
@@ -141,6 +145,28 @@ public:
                                                  // earlier by speed*lag so
                                                  // fast approaches still
                                                  // stop at the standoff
+    declare_parameter("emergency_decel", 4.0);   // m/s^2; task Event II (an
+                                                 // NPC crosses, then brakes
+                                                 // hard, directly ahead).
+                                                 // The ACC ramp below
+                                                 // targets a comfortable
+                                                 // a_obstacle (1.5) profile
+                                                 // and only reaches full
+                                                 // brake once the P-law
+                                                 // saturates on a large
+                                                 // speed error - a genuine
+                                                 // surprise needs an
+                                                 // immediate, first-
+                                                 // priority full-brake
+                                                 // command instead, ahead
+                                                 // of the comfort curve and
+                                                 // every state machine.
+                                                 // 4.0 sits above a_obstacle
+                                                 // so ordinary approaches
+                                                 // (already slowed by the
+                                                 // wide-corridor cap before
+                                                 // gaps get small) never
+                                                 // trip it.
     declare_parameter("stall_time", 4.0);        // s throttle with no motion
     declare_parameter("stall_hold", 3.0);        // s of brake after a stall
                                                  // fires, in every mode: a
@@ -324,6 +350,13 @@ public:
 
 private:
   enum class Mode { kNormal, kVerify, kDetour, kHold };
+  // Moderate brake for every "wait in place, re-evaluate next tick" case
+  // (kVerify/kHold pauses, the stall watchdog, the disabled-service hold):
+  // firm enough to actually stop, gentle enough not to read as an
+  // emergency stop. Deliberately NOT used by the dedicated stop curves
+  // (traffic light, ACC, emergency) - those compute their own brake from
+  // the actual required deceleration.
+  static constexpr float kWaitBrake = 0.6f;
 
   void RebuildArcTable() {
     const auto& pts = traj_.points;
@@ -492,115 +525,17 @@ private:
     return true;
   }
 
-  // single exit point: every command passes the stall watchdog, so a car
-  // that is commanded forward but does not move is always detected
-  void PublishCmd(simulation::msg::VehicleControl& cmd) {
-    // A fired watchdog brakes for stall_hold seconds, in EVERY mode. The
-    // old code substituted a brake for one 20 ms tick and, outside
-    // kNormal, let full throttle resume immediately: against a curb that
-    // is a permanent 4-s-throttle / one-tick-brake grind (observed) which
-    // can climb the car over the obstacle it is stuck on.
-    if (now() < stall_hold_until_) {
-      cmd = simulation::msg::VehicleControl();
-      cmd.brake = 0.6;
-      braking_ = true;
-      cmd_pub_->publish(cmd);
-      return;
-    }
-    if (cmd.throttle >= 0.25f && cmd.brake == 0.0f && speed_ < 0.1) {
-      if (!stall_since_.has_value()) stall_since_ = now();
-      if ((now() - *stall_since_).seconds() >
-          get_parameter("stall_time").as_double()) {
-        stall_since_.reset();
-        stall_hold_until_ =
-            now() + rclcpp::Duration::from_seconds(
-                        get_parameter("stall_hold").as_double());
-        // Never restore the base route here: mid-detour the car may be
-        // alongside the obstacle and the base route runs through it.
-        // Brake and wait where we are; only kNormal escalates to kHold.
-        if (mode_ == Mode::kNormal) {
-          mode_ = Mode::kHold;
-          state_since_ = now();
-          hold_min_until_ = now() + rclcpp::Duration::from_seconds(10.0);
-        }
-        RCLCPP_ERROR(get_logger(),
-                     "Stalled: commanded throttle %.2f but v=%.2f - "
-                     "braking in place (no reverse by design)",
-                     cmd.throttle, speed_);
-        cmd = simulation::msg::VehicleControl();
-        cmd.brake = 0.6;
-      }
-    } else {
-      stall_since_.reset();
-    }
-    // single exit point: brake-branch hysteresis stays consistent across
-    // every early-return publish (kVerify/kHold waits, hard stops, stall)
-    braking_ = cmd.brake > 0.0f;
-    cmd_pub_->publish(cmd);
-  }
-
-  void Control() {
-    simulation::msg::VehicleControl cmd;
-    if (!enabled_) {
-      cmd.brake = 0.6;
-      PublishCmd(cmd);
-      return;
-    }
-    if (traj_.points.empty() || !pose_.has_value()) {
-      PublishCmd(cmd);  // all zeros until inputs are ready
-      return;
-    }
-    const auto& pts = traj_.points;
-    const double px = pose_->pose.position.x;
-    const double py = pose_->pose.position.y;
-    const auto& q = pose_->pose.orientation;
-    const double yaw =
-        std::atan2(2.0 * (q.w * q.z + q.x * q.y),
-                   1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-
-    UpdateNearest(px, py, yaw);
-    const double s_now = arc_[nearest_];
-
-    // goal reached -> hold full brake
-    const double goal_d =
-        std::hypot(pts.back().x - px, pts.back().y - py);
-    if (finished_ ||
-        (nearest_ + 10 >= pts.size() &&
-         goal_d < get_parameter("goal_tolerance").as_double())) {
-      finished_ = true;
-      cmd.brake = 1.0;
-      PublishCmd(cmd);
-      RCLCPP_INFO_ONCE(get_logger(), "Goal reached - holding brake.");
-      return;
-    }
-
-    // --- corridor roles ----------------------------------------------
-    // HARD blocking (stop / detour decisions) uses the 1.1 m tight
-    // corridor: that is the swept path, and anything wider than it cannot
-    // be hit. The 1.4 m corridor over-triggers on roadside furniture
-    // (guardrails, arch feet, hydrants at lat 1.1-1.4) and only moderates
-    // SPEED below - like a human slowing past close parked objects.
-    const double watch_norm = tight_dist_;
-    const rclcpp::Time watch_stamp = tight_stamp_;
-    // age-compensated gap for the static-obstacle tracker: at the new
-    // 4-6 m/s approach speeds, measurement age alone smears the world-arc
-    // constancy check by +-0.5 m and masked genuinely parked obstacles
-    const double watch_comp =
-        std::isfinite(watch_norm)
-            ? watch_norm -
-                  speed_ * std::clamp((now() - watch_stamp).seconds(), 0.0,
-                                      get_parameter("stale_blocked")
-                                          .as_double())
-            : watch_norm;
-
-    // --- static-obstacle state machine -------------------------------
-    const double standoff = get_parameter("obstacle_standoff").as_double();
-    // light phase freshness, needed both here (queue guard) and by the
-    // traffic-light block below
-    const double stale = get_parameter("light_stale").as_double();
-    const bool red_fresh = (now() - last_red_).seconds() < stale;
-    const bool green_fresh = (now() - last_green_).seconds() < stale;
-    const std::vector<double>& stop_lines = stop_arcs_;
+  // Static/queued-obstacle avoidance: kNormal (watch + proactive replan,
+  // then a stopped-behind-it fallback) -> kVerify (confirm the shifted
+  // path is actually clear) -> kDetour (thread it) -> back to kNormal;
+  // kHold whenever nothing safe is currently possible. Returns true if
+  // it already published this tick's command (waiting on a fresh
+  // corridor read, or holding) - Control() must stop right there.
+  bool RunObstacleStateMachine(double s_now, double standoff,
+                               double watch_norm, double watch_comp,
+                               bool green_fresh,
+                               const std::vector<double>& stop_lines,
+                               simulation::msg::VehicleControl& cmd) {
     // Queue-traffic guard: an obstacle sitting between us and a
     // signalized stop line (or just past it) while the phase is not a
     // confirmed green is almost certainly a vehicle WAITING at the
@@ -699,9 +634,9 @@ private:
       const double waited = (now() - state_since_).seconds();
       const bool fresh = tight_stamp_ > state_since_ && waited > 0.6;
       if (!fresh && waited < 3.0) {
-        cmd.brake = 0.6;
+        cmd.brake = kWaitBrake;
         PublishCmd(cmd);
-        return;
+        return true;
       }
       const double horizon = std::min(28.0, detour_end_ - s_now);
       const bool clear = fresh && (!std::isfinite(tight_dist_) ||
@@ -740,9 +675,9 @@ private:
       // wait in place, then hand the decision back to kNormal, which owns
       // the 8-s static confirmation - kHold itself never requests detours
       if (now() < hold_min_until_) {
-        cmd.brake = 0.6;
+        cmd.brake = kWaitBrake;
         PublishCmd(cmd);
-        return;
+        return true;
       }
       if (!std::isfinite(watch_norm) || watch_norm > standoff + 4.0) {
         mode_ = Mode::kNormal;
@@ -752,11 +687,171 @@ private:
         mode_ = Mode::kNormal;  // re-confirm the obstacle from scratch
         blocked_since_.reset();
       } else {
-        cmd.brake = 0.6;
+        cmd.brake = kWaitBrake;
         PublishCmd(cmd);
-        return;
+        return true;
       }
     }
+    return false;
+  }
+
+  // single exit point: every command passes the stall watchdog, so a car
+  // that is commanded forward but does not move is always detected
+  void PublishCmd(simulation::msg::VehicleControl& cmd) {
+    // A fired watchdog brakes for stall_hold seconds, in EVERY mode. The
+    // old code substituted a brake for one 20 ms tick and, outside
+    // kNormal, let full throttle resume immediately: against a curb that
+    // is a permanent 4-s-throttle / one-tick-brake grind (observed) which
+    // can climb the car over the obstacle it is stuck on.
+    if (now() < stall_hold_until_) {
+      cmd = simulation::msg::VehicleControl();
+      cmd.brake = kWaitBrake;
+      braking_ = true;
+      cmd_pub_->publish(cmd);
+      return;
+    }
+    if (cmd.throttle >= 0.25f && cmd.brake == 0.0f && speed_ < 0.1) {
+      if (!stall_since_.has_value()) stall_since_ = now();
+      if ((now() - *stall_since_).seconds() >
+          get_parameter("stall_time").as_double()) {
+        stall_since_.reset();
+        stall_hold_until_ =
+            now() + rclcpp::Duration::from_seconds(
+                        get_parameter("stall_hold").as_double());
+        // Never restore the base route here: mid-detour the car may be
+        // alongside the obstacle and the base route runs through it.
+        // Brake and wait where we are; only kNormal escalates to kHold.
+        if (mode_ == Mode::kNormal) {
+          mode_ = Mode::kHold;
+          state_since_ = now();
+          hold_min_until_ = now() + rclcpp::Duration::from_seconds(10.0);
+        }
+        RCLCPP_ERROR(get_logger(),
+                     "Stalled: commanded throttle %.2f but v=%.2f - "
+                     "braking in place (no reverse by design)",
+                     cmd.throttle, speed_);
+        cmd = simulation::msg::VehicleControl();
+        cmd.brake = kWaitBrake;
+      }
+    } else {
+      stall_since_.reset();
+    }
+    // single exit point: brake-branch hysteresis stays consistent across
+    // every early-return publish (kVerify/kHold waits, hard stops, stall)
+    braking_ = cmd.brake > 0.0f;
+    cmd_pub_->publish(cmd);
+  }
+
+  void Control() {
+    simulation::msg::VehicleControl cmd;
+    if (!enabled_) {
+      cmd.brake = kWaitBrake;
+      PublishCmd(cmd);
+      return;
+    }
+    if (traj_.points.empty() || !pose_.has_value()) {
+      PublishCmd(cmd);  // all zeros until inputs are ready
+      return;
+    }
+    const auto& pts = traj_.points;
+    const double px = pose_->pose.position.x;
+    const double py = pose_->pose.position.y;
+    const auto& q = pose_->pose.orientation;
+    const double yaw =
+        std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                   1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+    UpdateNearest(px, py, yaw);
+    const double s_now = arc_[nearest_];
+
+    // goal reached -> hold full brake
+    const double goal_d =
+        std::hypot(pts.back().x - px, pts.back().y - py);
+    if (finished_ ||
+        (nearest_ + 10 >= pts.size() &&
+         goal_d < get_parameter("goal_tolerance").as_double())) {
+      finished_ = true;
+      cmd.brake = 1.0;
+      PublishCmd(cmd);
+      RCLCPP_INFO_ONCE(get_logger(), "Goal reached - holding brake.");
+      return;
+    }
+
+    // --- corridor roles ----------------------------------------------
+    // HARD blocking (stop / detour decisions) uses the 1.1 m tight
+    // corridor: that is the swept path, and anything wider than it cannot
+    // be hit. The 1.4 m corridor over-triggers on roadside furniture
+    // (guardrails, arch feet, hydrants at lat 1.1-1.4) and only moderates
+    // SPEED below - like a human slowing past close parked objects.
+    const double watch_norm = tight_dist_;
+    const rclcpp::Time watch_stamp = tight_stamp_;
+    // age-compensated gap for the static-obstacle tracker: at the new
+    // 4-6 m/s approach speeds, measurement age alone smears the world-arc
+    // constancy check by +-0.5 m and masked genuinely parked obstacles
+    const double watch_comp =
+        std::isfinite(watch_norm)
+            ? watch_norm -
+                  speed_ * std::clamp((now() - watch_stamp).seconds(), 0.0,
+                                      get_parameter("stale_blocked")
+                                          .as_double())
+            : watch_norm;
+
+    // Diagnostic only: the ACC gap-follow logic below adjusts speed
+    // silently (by design - a followed vehicle should not spam logs every
+    // tick), so a NEW obstacle entering the tight corridor is otherwise
+    // invisible in the console. Log once per distinct encounter (rising
+    // edge only) so a run's full obstacle history - static props AND any
+    // NPC event (merge/cross) - is visible for review/grading.
+    {
+      const bool present = std::isfinite(watch_norm) && watch_norm < 35.0;
+      if (present && !obstacle_present_) {
+        RCLCPP_INFO(get_logger(),
+                    "Obstacle entered corridor: %.1f m ahead at s=%.0f m "
+                    "(our speed %.1f m/s)", watch_norm, s_now, speed_);
+      }
+      obstacle_present_ = present;
+    }
+
+    // --- emergency stop (task 2.4.3, Event II) ------------------------
+    // Fires before anything else this tick, in every mode: a vehicle that
+    // crosses and brakes hard directly ahead needs an immediate full-brake
+    // command computed straight from raw distance/speed, not one derived
+    // through the comfort-tuned ACC curve and P-gain further down. Uses
+    // the tight (swept-path) corridor, the same authoritative "would we
+    // hit this" measure the rest of the collision-avoidance logic uses.
+    {
+      const double age_e = (now() - tight_stamp_).seconds();
+      if (std::isfinite(tight_dist_) &&
+          age_e <= get_parameter("stale_blocked").as_double()) {
+        const double d_eff = std::max(0.05, tight_dist_ - speed_ * age_e);
+        const double a_required = (speed_ * speed_) / (2.0 * d_eff);
+        if (a_required > get_parameter("emergency_decel").as_double()) {
+          cmd.throttle = 0.0;
+          cmd.brake = 1.0;
+          if (!emergency_active_)
+            RCLCPP_WARN(get_logger(),
+                        "EMERGENCY STOP: %.1f m ahead at %.1f m/s needs "
+                        "%.1f m/s^2 - full brake", tight_dist_, speed_,
+                        a_required);
+          emergency_active_ = true;
+          PublishCmd(cmd);
+          return;
+        }
+      }
+      emergency_active_ = false;
+    }
+
+    // --- static-obstacle state machine -------------------------------
+    const double standoff = get_parameter("obstacle_standoff").as_double();
+    // light phase freshness, needed both here (queue guard) and by the
+    // traffic-light block below
+    const double stale = get_parameter("light_stale").as_double();
+    const bool red_fresh = (now() - last_red_).seconds() < stale;
+    const bool green_fresh = (now() - last_green_).seconds() < stale;
+    const std::vector<double>& stop_lines = stop_arcs_;
+    if (RunObstacleStateMachine(s_now, standoff, watch_norm, watch_comp,
+                                green_fresh, stop_lines, cmd))
+      return;
 
     // --- lookahead + pure pursuit steering ---------------------------
     const double ld = get_parameter("lookahead_min").as_double() +
@@ -991,17 +1086,38 @@ private:
           stop_curve = true;
         }
         // Fail-safe for an unwinnable wait: stopped AT the line with no
-        // phase visible (lamp left the camera FOV overhead). Requires
-        // BOTH timers - a full stop of blind_release seconds AND that
-        // long without any phase - plus being actually at the line with
-        // the path ahead clear, so it can never fire while queued behind
-        // a lamp-occluding vehicle farther back.
+        // phase visible (lamp left the camera FOV overhead). Gated on
+        // (a) a full stop of blind_release seconds, anchored to when we
+        // physically stopped - a fixed point, immune to being pushed
+        // later - and (b) currently having no fresh phase read (age since
+        // the last vote exceeds light_stale, the same short freshness
+        // window used everywhere else), plus being at the line with the
+        // path ahead clear.
+        //
+        // (b) used to be its OWN blind_release-length timer anchored to
+        // max(last_red_, last_green_) instead: a single late, transient
+        // vote (plausible exactly here - the head is only briefly
+        // glimpse-able before going out of FOV) would re-anchor that
+        // timer to a point already deep into the red phase, so the
+        // required additional blind_release-second wait from THAT point
+        // could overshoot the green+amber window entirely and release
+        // into the START of the next red cycle - a confirmed, real defect
+        // (89-agent review). Anchoring both timers the same way removes
+        // that specific failure mode. It does not make the wait provably
+        // safe in every case - blind_release (22s, one measured red
+        // phase) is not always long enough to guarantee clearing red
+        // regardless of exactly when within the phase we stopped, if the
+        // red phase itself is longer than the green+amber window that
+        // follows it (true at TL1: 22s red vs 14s green+amber) - a timer
+        // with zero visibility fundamentally cannot guarantee this. What
+        // this fix removes is the AVOIDABLE extra delay a stray late vote
+        // used to add on top of that already-imperfect margin.
         if (speed_ < 0.3) {
           if (red_stop_onset_.nanoseconds() == 0) red_stop_onset_ = now();
         } else {
           red_stop_onset_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
         }
-        const double blind =
+        const double vote_age =
             (now() - std::max(last_red_, last_green_)).seconds();
         const double stopped =
             red_stop_onset_.nanoseconds() > 0
@@ -1009,14 +1125,16 @@ private:
                 : 0.0;
         const double release =
             get_parameter("light_blind_release").as_double();
+        const bool currently_blind =
+            vote_age > get_parameter("light_stale").as_double();
         const bool at_line = gap < 3.0;
         const bool path_clear =
             !std::isfinite(tight_dist_) || tight_dist_ > 20.0;
-        if (blind > release && stopped > release && at_line && path_clear) {
+        if (currently_blind && stopped > release && at_line && path_clear) {
           RCLCPP_WARN(get_logger(),
-                      "Signal not visible for %.0f s after a %.0f s stop "
-                      "at the line - proceeding across s=%.0f m",
-                      blind, stopped, line_s);
+                      "Signal not visible (%.1f s since last read) after a "
+                      "%.0f s stop at the line - proceeding across s=%.0f m",
+                      vote_age, stopped, line_s);
           blind_released_line_ = line_s;
           red_hold_ = false;
           red_stop_onset_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
@@ -1129,6 +1247,8 @@ private:
   double blind_released_line_{-1e9};
   bool braking_{false};
   bool enabled_{true};
+  bool emergency_active_{false};
+  bool obstacle_present_{false};
 
   rclcpp::Publisher<simulation::msg::VehicleControl>::SharedPtr cmd_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr detour_pub_;

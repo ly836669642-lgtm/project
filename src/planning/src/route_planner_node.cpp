@@ -1,9 +1,12 @@
-// Route planner: loads the recorded track waypoints (already centered on
-// the driving lane; lane_offset stays 0 in the shipped configuration),
-// smooths them, and attaches a curvature- and acceleration-limited speed
-// profile. The result is published latched as
-//   /planning/trajectory  (project_interfaces/Trajectory, for the controller)
-//   /planning/route       (nav_msgs/Path, for RViz)
+// Route planner: loads the recorded track waypoints, applies a right-hand
+// lane offset, smooths them, and attaches a curvature- and acceleration-
+// limited speed profile. Also continuously selects the next short-term
+// goal from the task's predefined pose list (Fig. 4 spawn positions) as
+// the vehicle advances - see SelectGoal(). The result is published
+// latched as
+//   /planning/trajectory   (project_interfaces/Trajectory, for the controller)
+//   /planning/route        (nav_msgs/Path, for RViz)
+//   /planning/current_goal (geometry_msgs/PoseStamped, live goal selection)
 
 #include <cmath>
 #include <fstream>
@@ -17,6 +20,9 @@
 #include <project_interfaces/msg/trajectory.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+
+#include <algorithm>
+#include <limits>
 
 struct Pt {
   double x{0.0};
@@ -87,16 +93,47 @@ public:
     declare_parameter("a_accel", 2.5);        // m/s^2
     declare_parameter("a_decel", 3.0);        // m/s^2
     declare_parameter("smooth_iterations", 3);
+    // Short-term goal selection (task 2.3.1): the only predefined-pose
+    // list given anywhere in the task materials is Fig. 4's "Available
+    // spawn positions" (world coords, measured at Milestone 2 by spawning
+    // at every index and reading /OurCar/CoM/pose). The planner does not
+    // hardcode which one is "next" - GoalArcs() below projects each onto
+    // the live route's arc length, and SelectGoal() picks the nearest one
+    // still ahead of the vehicle's current arc position, re-evaluated on
+    // every pose update as the car advances through the list.
+    declare_parameter("goal_poses",
+                      std::vector<double>{
+                          -62.80, -12.29,
+                          -49.0,   52.4,
+                           70.3,   52.7,
+                          141.6,   52.9,
+                          229.3,   16.0,
+                          141.4,    3.3,
+                          122.4,    9.1,
+                          103.1,   52.3,
+                           46.0,   26.5,
+                           39.0,    3.5});
 
     auto qos = rclcpp::QoS(1).transient_local().reliable();
     traj_pub_ =
         create_publisher<project_interfaces::msg::Trajectory>(
             "/planning/trajectory", qos);
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/planning/route", qos);
+    goal_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
+        "/planning/current_goal", rclcpp::QoS(1).transient_local().reliable());
     detour_sub_ = create_subscription<std_msgs::msg::Float32MultiArray>(
         "/planning/detour", 10,
         [this](std_msgs::msg::Float32MultiArray::SharedPtr m) {
           OnDetour(*m);
+        });
+    pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+        "/OurCar/CoM/pose", 10,
+        [this](geometry_msgs::msg::PoseStamped::SharedPtr m) {
+          const auto& q = m->pose.orientation;
+          const double yaw =
+              std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                        1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+          SelectGoal(m->pose.position.x, m->pose.position.y, yaw);
         });
 
     Plan();
@@ -113,7 +150,96 @@ private:
     ApplyLaneOffset(&pts);
     Smooth(&pts, get_parameter("smooth_iterations").as_int());
     base_pts_ = pts;
+    RebuildBaseArc();
+    GoalArcs();
     Publish(base_pts_);
+  }
+
+  void RebuildBaseArc() {
+    base_arc_.assign(base_pts_.size(), 0.0);
+    for (size_t i = 1; i < base_pts_.size(); ++i)
+      base_arc_[i] = base_arc_[i - 1] +
+                    std::hypot(base_pts_[i].x - base_pts_[i - 1].x,
+                              base_pts_[i].y - base_pts_[i - 1].y);
+  }
+
+  // Project every predefined pose onto the live base route's arc length.
+  // Re-run whenever the base route changes (only at startup today - the
+  // base route itself never changes after Plan(), only detour shifts do,
+  // and those stay within a short local window that does not move the
+  // goal poses' nearest points).
+  void GoalArcs() {
+    const std::vector<double> xy = get_parameter("goal_poses").as_double_array();
+    goal_arcs_.clear();
+    if (base_pts_.empty()) return;
+    for (size_t k = 0; k + 1 < xy.size(); k += 2) {
+      size_t best = 0;
+      double best_d = std::numeric_limits<double>::infinity();
+      for (size_t i = 0; i < base_pts_.size(); ++i) {
+        const double d = std::hypot(base_pts_[i].x - xy[k],
+                                    base_pts_[i].y - xy[k + 1]);
+        if (d < best_d) { best_d = d; best = i; }
+      }
+      goal_arcs_.push_back(base_arc_[best]);
+    }
+    std::sort(goal_arcs_.begin(), goal_arcs_.end());
+  }
+
+  // Select the next predefined pose still ahead of the vehicle and
+  // publish it (only on change, so this is a live topic, not a per-tick
+  // log flood). The route is an out-and-back loop that passes close to
+  // itself in world-space at several points, so a plain per-message
+  // global nearest-point search flip-flops between the two overlapping
+  // legs - the same failure mode the controller's UpdateNearest already
+  // solved. Same fix here: one heading-filtered global search to lock
+  // on, then a narrow local window around the last result.
+  void SelectGoal(double px, double py, double yaw) {
+    if (base_pts_.empty() || goal_arcs_.empty()) return;
+    size_t lo = 0, hi = base_pts_.size();
+    if (!goal_search_global_) {
+      lo = last_nearest_ > 25 ? last_nearest_ - 25 : 0;
+      hi = std::min(last_nearest_ + 50, base_pts_.size());
+    }
+    size_t nearest = last_nearest_;
+    double best_d = std::numeric_limits<double>::infinity();
+    for (size_t i = lo; i < hi; ++i) {
+      if (goal_search_global_) {
+        const size_t a = i > 1 ? i - 1 : 0;
+        const size_t b = std::min(i + 1, base_pts_.size() - 1);
+        const double heading =
+            std::atan2(base_pts_[b].y - base_pts_[a].y,
+                      base_pts_[b].x - base_pts_[a].x);
+        const double diff = std::remainder(heading - yaw, 2.0 * M_PI);
+        if (std::abs(diff) > M_PI / 2.0) continue;
+      }
+      const double d = std::hypot(base_pts_[i].x - px, base_pts_[i].y - py);
+      if (d < best_d) { best_d = d; nearest = i; }
+    }
+    last_nearest_ = nearest;
+    goal_search_global_ = false;
+    const double s_now = base_arc_[nearest];
+    double goal_s = goal_arcs_.back();
+    for (double g : goal_arcs_) {
+      if (g > s_now + 1.0) { goal_s = g; break; }
+    }
+    if (std::abs(goal_s - last_goal_s_) < 0.5) return;
+    last_goal_s_ = goal_s;
+    size_t gi = 0;
+    double gd = std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < base_arc_.size(); ++i) {
+      const double d = std::abs(base_arc_[i] - goal_s);
+      if (d < gd) { gd = d; gi = i; }
+    }
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.frame_id = "world";
+    ps.header.stamp = now();
+    ps.pose.position.x = base_pts_[gi].x;
+    ps.pose.position.y = base_pts_[gi].y;
+    ps.pose.orientation.w = 1.0;
+    goal_pub_->publish(ps);
+    RCLCPP_INFO(get_logger(),
+                "Short-term goal selected: arc s=%.0f m (%.1f, %.1f)",
+                goal_s, base_pts_[gi].x, base_pts_[gi].y);
   }
 
   // Local replan requested by the controller: shift the base route
@@ -319,10 +445,17 @@ private:
   }
 
   std::vector<Pt> base_pts_;
+  std::vector<double> base_arc_;
+  std::vector<double> goal_arcs_;
+  double last_goal_s_{-1.0};
+  size_t last_nearest_{0};
+  bool goal_search_global_{true};
   rclcpp::Publisher<project_interfaces::msg::Trajectory>::SharedPtr traj_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
       detour_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
 };
 
 int main(int argc, char** argv) {
