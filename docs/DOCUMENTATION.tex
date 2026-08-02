@@ -111,15 +111,57 @@ amber lamp; the controller treats ``stopped, no fresh green yet'' as
 
 \subsection{Planning}
 
-\texttt{route\_planner\_node} loads the recorded waypoints, builds a
-curvature-limited speed profile, and publishes a \texttt{Trajectory}. On a
-\texttt{/planning/detour} request from \texttt{control} it re-splices a
-laterally-offset segment around a confirmed static obstacle, then restores
-the base route once past it. It also implements short-term goal selection
-over the task's predefined pose list (Fig.~4 in the task sheet): each pose
-is projected onto the route's arc length once at startup, and the nearest
-goal still ahead of the car is published (on change only) to
-\texttt{/planning/current\_goal}.
+\subsubsection{Base Path Generation}
+\label{sec:path-generation}
+
+\texttt{route\_planner\_node} loads the recorded waypoints and, once at
+startup, builds a fixed \emph{base path} through three steps: a
+right-hand lane offset, iterative smoothing, and a curvature- and
+acceleration-limited speed profile.
+
+The lane offset shifts the recorded line sideways so the car drives its
+own side of the road rather than straddling the recorded centreline,
+using a stretch-by-stretch offset amount tuned to how much room each
+part of the road actually has; the offset eases in and out gradually
+between stretches and backs off in sharp turns so it never pushes the
+car toward a curb or a junction's inside edge. The offset path is then
+smoothed to remove the jaggedness inherent in sampled waypoints, since a
+noisy path would otherwise be read as artificially tight curvature.
+
+Finally each point is assigned a speed: tighter curves get a lower speed
+limit, and separate braking and accelerating passes walk the path in
+each direction so that the speed never changes faster than the vehicle
+can actually brake or accelerate between two consecutive points. The
+resulting base path, with per-point position, heading, curvature, and
+speed, is published once as the planner's live trajectory.
+
+\subsubsection{Detour Replanning and Goal Selection}
+\label{sec:detour-goal-selection}
+
+On top of the static base path, \texttt{route\_planner\_node} handles two
+forms of on-line update: obstacle detours requested by \texttt{control},
+and continuous short-term goal selection over the task's predefined pose
+list.
+
+When \texttt{control} confirms a static obstacle ahead, it asks the
+planner for a local detour: a short stretch of the base path is shifted
+sideways just enough to clear the obstacle, then blended smoothly back
+into the original line on either side so the car never has to make an
+abrupt lateral jump. Rather than recomputing the whole route, the planner
+locates the affected stretch directly by searching the path's arc-length
+ordering, which keeps replanning cheap and responsive even as the route
+grows. The detoured section is re-run through the same curvature- and
+acceleration-limited speed profile as the base path, so it stays just as
+driveable. Once the obstacle is reported clear, the planner simply
+reverts to the unmodified base path.
+
+Independently, the planner continuously tracks the vehicle's progress
+along the route and selects the next short-term goal from the task's
+predefined pose list, publishing whichever goal is nearest ahead of the
+car as it advances. Because the route loops back near itself at a few
+points, the planner uses the vehicle's heading to disambiguate which pass
+through the route it is currently on, avoiding confusion between two
+nearby but unrelated points on the path.
 
 \subsection{Control}
 \label{sec:control}
