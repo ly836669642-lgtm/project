@@ -1,7 +1,9 @@
 """Generates docs/Report.pptx: a 6-slide, ~7-minute talk summarizing
-DOCUMENTATION.md (cover, system overview, perception, planning, control,
-results). Content and figures are pulled directly from DOCUMENTATION.md /
-DOCUMENTATION.tex; regenerate this script's output if the doc changes.
+DOCUMENTATION.md (cover, system overview, planning, perception, control,
+results), framed as three layers: Planning decides where to go, Perception
+senses the world, Control drives and reacts in real time. Content and
+figures are pulled directly from DOCUMENTATION.md / DOCUMENTATION.tex;
+regenerate this script's output if the doc changes.
 
 Run with: conda run -n claude python docs/build_report_pptx.py
 """
@@ -154,8 +156,8 @@ def build():
 
     set_notes(s,
         "Good afternoon. This is our autonomous driving project for the Introduction "
-        "to ROS course. I will walk through our system architecture, then perception, "
-        "planning, and control, and finish with our test results."
+        "to ROS course. I will walk through our system architecture, then planning, "
+        "perception, and control, and finish with our test results."
     )
 
     # ---------------- Slide 2: System Overview ----------------
@@ -163,10 +165,11 @@ def build():
     add_title(s, "System Overview")
     bullets = [
         "Fixed ~785 m urban loop; waypoints published once at startup",
-        "5 custom ROS 2 packages (interfaces, perception, planning, control, bringup)",
-        ("plus 2 course-provided packages (simulation bridge, reference controller)", 1),
-        "Perception & planning run independently, in parallel",
-        "Control is the only node combining their outputs — sole path to /car_command",
+        "5 custom + 2 course-provided ROS 2 packages",
+        "Three layers, matching Figure 1:",
+        ("Planning — decides destinations", 1),
+        ("Perception — senses its surrounding environment", 1),
+        ("Control — drives the car & reacts in real time", 1),
         "Benchmark run: 272 s, zero collisions, zero stalls, 1 detour, 2 correct light stops",
         ("Average speed 2.7 m/s, peak 7.5 m/s on the longest straights", 1),
     ]
@@ -176,124 +179,105 @@ def build():
     img_col_w = Inches(5.5)
     add_picture_fit(s, FIGS / "architecture_illustrated.png", img_left, CONTENT_TOP,
                      img_col_w, Inches(3.35), "Fig. 1 — Node/data-flow architecture")
-    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(4.85),
-                     img_col_w, Inches(2.1), "Fig. 5 — Route with 10 predefined goal poses")
 
     set_notes(s,
         "Our car drives a fixed, roughly 785-meter urban loop, using waypoints "
-        "published once at startup. We wrote five ROS 2 packages -- interfaces, "
-        "perception, planning, control, and bringup -- on top of two packages "
-        "provided by the course. As Figure 1 shows, perception and planning run "
-        "independently and in parallel, each consuming the simulator's sensor and "
-        "pose streams. Control is the only node that combines their outputs, and "
-        "it's the sole path to the car's command topic -- no other node talks to "
-        "the simulator directly. On the results side, a full benchmark run "
-        "completed in 272 seconds with zero collisions, zero stalls, one obstacle "
-        "detour, and two red-light stops handled correctly. Average speed was 2.7 "
-        "meters per second, peaking at 7.5 on the two longest straights. Figure 5 "
-        "shows the planned route on the course map, along with the ten predefined "
-        "goal poses our planner selects between."
+        "published once at startup. We wrote five ROS 2 packages on top of two "
+        "provided by the course, and we can think of the system in three layers, "
+        "matching Figure 1. Planning decides where the car should go -- both the "
+        "offline base route and live updates like rerouting around obstacles. "
+        "Perception senses the world -- obstacles and traffic lights. And Control "
+        "executes that path and reacts in real time -- steering, speed, and safety "
+        "braking. Perception and planning both feed directly into control, and "
+        "control is the only node that talks to the car itself. On the results "
+        "side, a full benchmark run completed in 272 seconds with zero collisions, "
+        "zero stalls, one obstacle detour, and two red-light stops handled "
+        "correctly. Average speed was 2.7 meters per second, peaking at 7.5 on the "
+        "two longest straights. Figure 5 shows the planned route on the course "
+        "map, with the ten predefined goal poses our planner selects between."
     )
 
-    # ---------------- Slide 3: Perception ----------------
+    # ---------------- Slide 3: Planning ----------------
     s = blank_slide(prs)
-    add_title(s, "Perception")
+    add_title(s, "Planning — Deciding Destinations")
     bullets = [
-        "obstacle_guard_node: depth point cloud → world frame",
-        ("publishes 4 corridor distances: main, tight, overtake-left, overtake-right", 1),
-        ("keeps points 0.35–3.0 m high, filtering road-surface noise", 1),
-        ("OctoMap cross-check (0.08–0.35 m band) catches curb-height misses", 1),
-        "traffic_light_node: HSV blob detection, shape-filtered",
-        ("detects red & green only; amber can't be separated from casing", 1),
-        ("\"no fresh green\" is treated as \"keep waiting\"", 1),
-        "No node ever uses the semantic camera — full bonus criterion claimed",
-        "Limitation: ~0.7 Hz update rate, capped by simulator's single-core loop",
+        "Builds the path the car follows — offline, and online corrections while driving",
+        "Offline at startup: smooth base path on the correct side of the road",
+        ("sets a safe speed for every turn — tighter turns, lower speed", 1),
+        "Online corrections: reactions to the world at the path level:",
+        ("spots a parked obstacle → smoothly reroutes around it, then returns", 1),
+        ("continuously picks the next checkpoint to aim for", 1),
+        ("out of 10 fixed goal points placed around the loop", 1),
+    ]
+    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=21, sub_size=17)
+
+    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(4.85),
+                     img_col_w, Inches(2.1), "Fig. 5 — Route with 10 predefined goal poses")
+    set_notes(s,
+        "Planning is where the car decides where to go -- both offline and "
+        "online. At startup, it builds a smooth base path that stays on the "
+        "correct side of the road and sets a safe speed for every turn -- tighter "
+        "turns get lower speeds. But it doesn't stop there: while driving, "
+        "planning also reacts to the world at the path level. If control confirms "
+        "a parked obstacle ahead, planning smoothly reroutes around it and "
+        "returns to the normal path afterward. And it continuously picks the next "
+        "checkpoint to aim for, out of ten fixed goal points placed around the "
+        "loop."
+    )
+
+    # ---------------- Slide 4: Perception ----------------
+    s = blank_slide(prs)
+    add_title(s, "Perception — Sensing the World")
+    bullets = [
+        "Feeds real-time awareness to both planning and control",
+        "Obstacle detection: depth camera builds a 3D view of the road ahead",
+        ("tracks distance to the nearest obstacle, in the driving lane and to the sides", 1),
+        ("ignores ground-level noise, only counts real obstacles", 1),
+        ("backup 3D map check catches low, curb-height obstacles the camera misses", 1),
+        "Traffic-light detection: RGB camera tells red from green",
+        "Deliberately never uses the labeled (semantic) camera — full bonus earned",
+        "Trade-off: detection updates only ~once a second, limiting safe driving speed",
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=19, sub_size=16)
 
     set_notes(s,
-        "Perception has two nodes. obstacle_guard_node takes the depth camera's "
-        "point cloud, transforms it into the world frame, and measures distance to "
-        "obstacles along four corridors: main, tight, and two overtake corridors. "
-        "It keeps points between 0.35 and 3 meters high, filtering out road-surface "
-        "noise. It's cross-checked against an OctoMap occupancy layer covering the "
-        "8-to-35-centimeter band, which catches low, curb-height obstacles the live "
-        "scan structurally can't see. traffic_light_node uses HSV color-blob "
-        "detection on the facing signal, filtered by shape to reject false "
-        "positives like red signage. It only detects red and green -- amber can't "
-        "be reliably separated from the amber-painted signal casing -- so the "
-        "controller simply treats 'no fresh green yet' as 'keep waiting.' "
-        "Importantly, no node in our pipeline ever uses the semantic camera, which "
-        "claims the assignment's full bonus. One limitation: point-cloud updates "
-        "run at only about 0.7 hertz, bounded by the simulator's single-core render "
-        "loop, which caps how fast we can safely cruise."
-    )
-
-    # ---------------- Slide 4: Planning ----------------
-    s = blank_slide(prs)
-    add_title(s, "Planning")
-    bullets = [
-        "route_planner_node — two responsibilities",
-        "1. Base path (once, at startup):",
-        ("right-hand lane offset, so the car keeps its own side of the road", 1),
-        ("iterative smoothing + curvature/acceleration-limited speed profile", 1),
-        ("covers both the path-planner and trajectory-planner roles", 1),
-        "2. Online updates:",
-        ("detour replanning around confirmed static obstacles", 1),
-        ("located via binary search on arc length, not full rescans", 1),
-        ("smooth blend in/out; reverts once obstacle is clear", 1),
-        ("continuous nearest-still-ahead goal selection over 10 fixed poses", 1),
-    ]
-    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=19, sub_size=16)
-
-    set_notes(s,
-        "Planning is a single node, route_planner_node, with two jobs. First, once "
-        "at startup, it builds a base path: a right-hand lane offset so the car "
-        "keeps to its own side of the road, iterative smoothing, and a curvature- "
-        "and acceleration-limited speed profile -- slower through tight turns, "
-        "respecting braking and acceleration limits between points. This covers "
-        "both the geometric path-planning role and the kinematic trajectory-"
-        "planning role. Second, online, it handles two things. When control "
-        "confirms a static obstacle, the planner shifts a short stretch of the "
-        "path sideways, blends smoothly back in, and reverts once clear -- "
-        "locating that stretch with a binary search over arc length rather than "
-        "rescanning the whole route. It also continuously selects the nearest "
-        "still-ahead goal from the task's ten predefined poses, using a "
-        "heading-locked search to handle the fact that our loop crosses near "
-        "itself."
+        "Perception's job is simple: sense the world and hand that information to "
+        "planning and control. An obstacle detector uses the depth camera to "
+        "build a 3D view of the road ahead, and tracks how far away the nearest "
+        "obstacle is, in the driving lane as well as to the sides. It ignores "
+        "ground-level noise and only counts real obstacles, and a backup 3D map "
+        "check catches low, curb-height obstacles the live camera might miss. A "
+        "traffic-light detector uses color to tell red from green, and "
+        "deliberately never uses the labeled semantic camera, which earns us the "
+        "assignment's full bonus. One trade-off: detection only updates about "
+        "once a second, which limits how fast the car can safely drive."
     )
 
     # ---------------- Slide 5: Control ----------------
     s = blank_slide(prs)
-    add_title(s, "Control")
+    add_title(s, "Control — Driving & Reacting in Real Time")
     bullets = [
-        "pure_pursuit_node: pure-pursuit steering + proportional/feed-forward throttle",
-        "/control/enable service — required, enabled by default at launch",
-        "ACC-style gap control:",
-        ("13 m standoff comfort-stop curve in the tight corridor", 1),
-        ("14–38 m wide-corridor speed ramp; also absorbs Event I (NPC merge)", 1),
-        "Traffic-light stop/go state machine",
-        "Obstacle detour state machine (verify-before-commit)",
-        "Emergency stop: brakes if required deceleration > 4.0 m/s² (Event II)",
+        "Takes the path from planning and the readings from perception, drives the car",
+        "Steering aims at a point ahead on the path (classic \"pursuit\" steering)",
+        "Speed follows a safe distance from anything ahead — like adaptive cruise control",
+        "Stops correctly at red lights, resumes on green",
+        "When perception flags a parked obstacle → verifies it's clear, takes a smooth detour",
+        "Independent emergency brake if a collision risk is detected",
+        "Car is ready to drive automatically as soon as it starts up",
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=19, sub_size=16)
 
     set_notes(s,
-        "Control lives in pure_pursuit_node. Steering uses a standard pure-pursuit "
-        "law with a speed-dependent look-ahead distance; throttle combines "
-        "proportional correction with a feed-forward table, since proportional "
-        "control alone settles well below the commanded speed. The node exposes "
-        "the required control-enable service, and it's enabled by default at "
-        "launch. For safety, an ACC-style gap controller enforces a comfort-stop "
-        "curve with a 13-meter standoff in the tight corridor, plus a "
-        "wide-corridor speed ramp between 14 and 38 meters -- this same following "
-        "logic absorbs the assignment's Event I, a vehicle merging in ahead. A "
-        "traffic-light state machine stops and releases correctly at each signal. "
-        "A detour state machine verifies a path is actually clear before "
-        "committing to it. And independent of all that, every control tick checks "
-        "whether emergency braking is needed -- decelerating at over 4 meters per "
-        "second squared -- which is what handles Event II, a vehicle that crosses "
-        "and brakes hard ahead of us."
+        "Control takes the path from planning and the live readings from "
+        "perception, and drives the car -- steering and speed. Steering aims at a "
+        "point on the path ahead, a classic and reliable method. Speed follows "
+        "adaptive-cruise-control logic, keeping a safe distance from whatever "
+        "perception detects ahead. On top of that, it stops correctly at red "
+        "lights, and when perception flags a parked obstacle, control verifies "
+        "the path is clear before taking a smooth detour around it. Independent "
+        "of everything else, an emergency-brake check runs continuously and stops "
+        "the car immediately if a collision risk is detected. And a simple switch "
+        "means the car is ready to drive automatically as soon as it starts up."
     )
 
     # ---------------- Slide 6: Results ----------------
