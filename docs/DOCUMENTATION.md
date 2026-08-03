@@ -18,14 +18,12 @@ ourselves sit on top of two packages provided by the course (`simulation`,
 the Unity TCP/UDP bridge, and `dummy_controller`, an unused reference
 example) and several external ROS libraries:
 
-![High-level node/data-flow architecture](figures/architecture.png)
+![High-level node/data-flow architecture](figures/architecture_illustrated.png)
 
 *Perception and planning consume the simulator's sensor/pose streams
 independently and run in parallel; `control` is the only node that
 combines their outputs and is the sole path to `/car_command` — no other
-node talks to the simulator directly. Colors match the ROS graph in
-Section 3 (yellow = perception, green = planning, blue = control, gray =
-course-provided).*
+node talks to the simulator directly.*
 
 A single launch file (`bringup/main.launch.py`) starts every node, the
 static TF tree, and RViz. See Section 3 for the full, auto-generated ROS

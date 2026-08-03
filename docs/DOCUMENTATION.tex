@@ -7,8 +7,6 @@
 \usepackage{booktabs}
 \usepackage{float}
 \usepackage{needspace}
-\usepackage{tikz}
-\usetikzlibrary{positioning,arrows.meta}
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{enumitem}
@@ -59,62 +57,16 @@ course (\texttt{simulation}, the Unity TCP/UDP bridge, and
 \texttt{dummy\_controller}, an unused reference example) and several
 external ROS libraries:
 
-\begin{figure*}[t]
+\begin{figure}[t]
 \centering
-\begin{tikzpicture}[
-  box/.style={draw, rounded corners=3pt, align=center, font=\small,
-              line width=0.6pt, inner sep=6pt},
-  arr/.style={-{Latex[length=2.2mm,width=1.6mm]}, thick},
-  lbl/.style={font=\scriptsize, align=center}
-]
-
-\node[box, fill=black!8, minimum width=3.0cm] (unity) at (-5.6,0) {Unity sim};
-\node[box, fill=black!8, minimum width=5.4cm] (sim) at (0.6,0)
-  {simulation\\\footnotesize\itshape course-provided bridge};
-\draw[{Latex[length=2.2mm,width=1.6mm]}-{Latex[length=2.2mm,width=1.6mm]}, thick]
-  (unity.east) -- (sim.west) node[midway, above, lbl] {TCP/UDP};
-
-\node[lbl] (sense) at (0.6,-1.5)
-  {depth image, RGB image, pose, twist};
-\draw[arr] (sim.south) -- (sense.north);
-
-\node[box, fill=yellow!25, minimum width=6.4cm] (perc) at (-3.8,-3.4)
-  {\textbf{perception}\\[2pt]
-   \footnotesize\ttfamily obstacle\_guard\_node\\
-   \footnotesize\ttfamily traffic\_light\_node\\
-   \footnotesize\rmfamily + octomap\_server (curb check)};
-\node[box, fill=green!20, minimum width=6.4cm] (plan) at (5.0,-3.4)
-  {\textbf{planning}\\[2pt]
-   \footnotesize\ttfamily route\_planner\_node\\
-   \footnotesize\rmfamily waypoints $\to$ speed profile $\to$\\
-   \footnotesize\rmfamily trajectory, detour replanning};
-
-\draw[arr] (sense.south) -| (perc.north);
-\draw[arr] (sense.south) -| (plan.north);
-
-\node[box, fill=blue!15, minimum width=9.4cm] (ctrl) at (0.6,-5.7)
-  {\textbf{control}\\[2pt]
-   \footnotesize\ttfamily pure\_pursuit\_node\\
-   \footnotesize\rmfamily path tracking, ACC, traffic-light state
-   machine,\\
-   \footnotesize\rmfamily detour/verify state machine, emergency stop};
-
-\draw[arr] (perc.south) |- (ctrl.north);
-\draw[arr] (plan.south) |- (ctrl.north);
-
-\node[box, fill=black!8, minimum width=5.4cm] (out) at (0.6,-7.5)
-  {simulation $\to$ Unity sim};
-\draw[arr] (ctrl.south) -- (out.north)
-  node[midway, right, lbl] {\ /car\_command};
-
-\end{tikzpicture}
+\includegraphics[width=\columnwidth]{architecture_illustrated.png}
 \caption{High-level node/data-flow architecture. Perception and planning
   consume the simulator's sensor/pose streams independently and run in
   parallel; \texttt{control} is the only node that combines their outputs
   and the sole path to \texttt{/car\_command} --- no other node talks to
   the simulator directly.}
 \label{fig:architecture}
-\end{figure*}
+\end{figure}
 
 A single launch file (\texttt{bringup/main.launch.py}) starts every node,
 the static TF tree, and RViz. See Section~\ref{sec:rosgraph} for the full,
