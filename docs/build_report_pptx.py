@@ -45,7 +45,7 @@ def blank_slide(prs):
     return prs.slides.add_slide(prs.slide_layouts[6])
 
 
-def add_title(slide, text, size=32):
+def add_title(slide, text, size=34):
     box = slide.shapes.add_textbox(MARGIN, TITLE_TOP, SLIDE_W - 2 * MARGIN, TITLE_H)
     tf = box.text_frame
     tf.word_wrap = True
@@ -104,7 +104,7 @@ def add_picture_fit(slide, path, left, top, max_w, max_h, caption=None):
         tf.word_wrap = True
         p = tf.paragraphs[0]
         p.text = caption
-        p.font.size = Pt(12)
+        p.font.size = Pt(13)
         p.font.italic = True
         p.font.color.rgb = GRAY_TEXT
         p.alignment = PP_ALIGN.CENTER
@@ -131,7 +131,7 @@ def build():
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = "Autonomous Driving Project"
-    p.font.size = Pt(44)
+    p.font.size = Pt(46)
     p.font.bold = True
     p.font.color.rgb = WHITE
     p.alignment = PP_ALIGN.CENTER
@@ -141,7 +141,7 @@ def build():
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = 'TUM "Introduction to ROS" 2026 — Autonomous Driving Group Project'
-    p.font.size = Pt(20)
+    p.font.size = Pt(22)
     p.font.color.rgb = RGBColor(0xC9, 0xD6, 0xE8)
     p.alignment = PP_ALIGN.CENTER
 
@@ -150,7 +150,7 @@ def build():
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = "Author 1  ·  Author 2  ·  Author 3"
-    p.font.size = Pt(16)
+    p.font.size = Pt(18)
     p.font.color.rgb = RGBColor(0x9B, 0xB0, 0xCC)
     p.alignment = PP_ALIGN.CENTER
 
@@ -173,7 +173,7 @@ def build():
         "Benchmark run: 272 s, zero collisions, zero stalls, 1 detour, 2 correct light stops",
         ("Average speed 2.7 m/s, peak 7.5 m/s on the longest straights", 1),
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=16, sub_size=14)
+    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=19, sub_size=16)
 
     img_left = Inches(7.35)
     img_col_w = Inches(5.5)
@@ -209,10 +209,10 @@ def build():
         ("continuously picks the next checkpoint to aim for", 1),
         ("out of 10 fixed goal points placed around the loop", 1),
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=21, sub_size=17)
+    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.9), bullets, font_size=19, sub_size=16)
 
-    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(4.85),
-                     img_col_w, Inches(2.1), "Fig. 5 — Route with 10 predefined goal poses")
+    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(2.6),
+                     img_col_w, Inches(3.0), "Fig. 5 — Route with 10 predefined goal poses")
     set_notes(s,
         "Planning is where the car decides where to go -- both offline and "
         "online. At startup, it builds a smooth base path that stays on the "
@@ -238,7 +238,7 @@ def build():
         "Deliberately never uses the labeled (semantic) camera — full bonus earned",
         "Trade-off: detection updates only ~once a second, limiting safe driving speed",
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=19, sub_size=16)
+    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=23, sub_size=19)
 
     set_notes(s,
         "Perception's job is simple: sense the world and hand that information to "
@@ -258,14 +258,14 @@ def build():
     add_title(s, "Control — Driving & Reacting in Real Time")
     bullets = [
         "Takes the path from planning and the readings from perception, drives the car",
-        "Steering aims at a point ahead on the path (classic \"pursuit\" steering)",
-        "Speed follows a safe distance from anything ahead — like adaptive cruise control",
-        "Stops correctly at red lights, resumes on green",
+        ("Steering aims at a point ahead on the path (classic \"pursuit\" steering)", 1),
+        ("Speed follows a safe distance from anything ahead — like adaptive cruise control", 1),
+        ("Stops correctly at red lights, resumes on green", 1),
         "When perception flags a parked obstacle → verifies it's clear, takes a smooth detour",
         "Independent emergency brake if a collision risk is detected",
         "Car is ready to drive automatically as soon as it starts up",
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=19, sub_size=16)
+    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=23, sub_size=19)
 
     set_notes(s,
         "Control takes the path from planning and the live readings from "
@@ -285,15 +285,14 @@ def build():
     add_title(s, "Results")
     bullets = [
         "Fastest: two longest clear straights, peak 7.5 m/s",
-        "Slowest (near-zero dips): detour spot, TL2/TL3 stops, 2 ACC slowdowns",
+        "Slowest (near-zero dips): detour spot, TrafficLight2/TrafficLight3 stops, 2 ACC car following slowdowns",
         ("ACC dips = Event I (merge) and Event II (crossing + hard brake, s≈531)", 1),
-        "Design choice that mattered: wide-corridor cap 2.5 → 2.5–6.5 m/s ramp",
-        ("roadside furniture occupies that corridor 60–90% of route time", 1),
+        "Design choice that mattered: wide-corridor cap 2.5 → 2.5~6.5 m/s ramp",
+        ("roadside furniture occupies that corridor 60~90% of route time", 1),
         ("fixed route-wide starvation, not just one segment", 1),
         "Extra compute is localized to the detour segment (replan + re-profile)",
-        "System-wide limiter: perception's ~0.7 Hz update rate bounds top speed",
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=16, sub_size=14)
+    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=19, sub_size=16)
 
     img_left = Inches(7.35)
     img_col_w = Inches(5.5)
@@ -313,9 +312,7 @@ def build():
         "flat 2.5 meters per second, but roadside furniture sits in that corridor "
         "sixty to ninety percent of route time, so it was starving the whole run. "
         "Ramping that cap up to 6.5 meters per second fixed it route-wide, not "
-        "just locally. The other limiter is perception's update rate -- capped "
-        "around 0.7 hertz by the simulator's single-core loop -- which is what "
-        "ultimately bounds how much faster we could safely go."
+        "just locally."
     )
 
     out_path = DOCS / "Report.pptx"
