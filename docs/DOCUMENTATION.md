@@ -44,8 +44,14 @@ Unity sim  <--TCP/UDP-->  simulation (course-provided bridge)
                        /car_command -> simulation -> Unity
 ```
 
+*Perception and planning consume the simulator's sensor/pose streams
+independently and run in parallel; `control` is the only node that
+combines their outputs and is the sole path to `/car_command` — no other
+node talks to the simulator directly.*
+
 A single launch file (`bringup/main.launch.py`) starts every node, the
-static TF tree, and RViz. See Section 3 for the full ROS graph.
+static TF tree, and RViz. See Section 3 for the full, auto-generated ROS
+graph.
 
 ## 2. Packages and Nodes
 
@@ -57,7 +63,7 @@ static TF tree, and RViz. See Section 3 for the full ROS graph.
 | `perception` | Author 2 | `obstacle_guard_node` | Transforms the depth-camera point cloud into the world frame and measures, along the upcoming planned trajectory, the arc-length distance to the nearest obstacle in four corridors (main/tight/overtake-left/overtake-right), plus a supplementary check against an accumulated OctoMap projection for low obstacles (curbs) the live per-frame scan can't see (Section 2.3). |
 | `perception` | Author 2 | `traffic_light_node` | RGB HSV blob detection of the facing signal head. Deliberately does **not** use the semantic camera (bonus criterion). |
 | `planning` | Author 3 | `route_planner_node` | Builds a lane-snapped, curvature-limited-speed trajectory from the recorded waypoints; reactively replans a lateral detour around a confirmed static obstacle; selects the nearest still-ahead goal from the task's predefined pose list. |
-| `control` | Author 1 | `pure_pursuit_node` | Pure-pursuit path tracking, ACC-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required `/control/enable` service. |
+| `control` | Author 1 | `pure_pursuit_node` | Pure-pursuit path tracking, ACC (Adaptive Cruise Control)-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required `/control/enable` service. |
 | `bringup` | Author 3 | — | Single launch file, static TF tree (sensor extrinsics per the task sheet's vehicle drawing), RViz config. |
 
 ### 2.1 Perception
@@ -127,17 +133,33 @@ Independently, the planner continuously tracks the vehicle's progress
 along the route and selects the next short-term goal from the task's
 predefined pose list, publishing whichever goal is nearest ahead of the
 car as it advances. Because the route loops back near itself at a few
-points, the planner uses the vehicle's heading to disambiguate which pass
-through the route it is currently on, avoiding confusion between two
-nearby but unrelated points on the path.
+points, a plain nearest-point search would be ambiguous between two
+nearby but unrelated points on the path; the planner resolves this once,
+at startup, with a heading-filtered search that locks onto the correct
+pass through the route, then stays locked on with a narrow
+position-windowed local search around the last match — cheaper than
+repeating the heading check on every update, and sufficient once the
+initial ambiguity is resolved.
 
 ### 2.3 Control
 
 `pure_pursuit_node` tracks the published trajectory with a standard
-pure-pursuit lateral law and a throttle law combining a feed-forward table
-(calibrated against the simulator's own speed-tracking deficit) with
-proportional correction. On top of that:
+pure-pursuit lateral law — steering is chosen geometrically from a
+look-ahead point on the path rather than from a PID error term [2] — and
+a throttle law combining a feed-forward table with proportional
+correction. The feed-forward table exists because a plain proportional
+throttle law alone settles noticeably below its commanded speed at
+steady state (a textbook proportional-control steady-state error against
+the simulator's own speed-dependent drag); the table is calibrated
+directly against that measured gap at several speeds rather than added
+as an integral term. On top of that:
 
+- **`/control/enable` service** (`std_srvs/SetBool`, the project's
+  required self-implemented ROS service) lets an external caller start or
+  stop the vehicle on demand: the node launches holding the brake by
+  default (`start_enabled:=false`), and a `true` call releases it to
+  begin driving. Used, for example, to hold the car at a known
+  simulation state before releasing it for a timed test run.
 - **ACC-style gap control** slows for anything in the tight/main corridor
   ahead, with a distance-scaled approach cap.
 - **Traffic-light state machine** stops at the correct stop line for a red
@@ -171,6 +193,12 @@ proportional correction. On top of that:
   alone.
 
 ## 3. ROS Graph
+
+The graph below is generated directly from the launch file (not
+hand-drawn), so it reflects the actual node/topic wiring: nodes are
+ellipses, topics are the labeled edges between them, and edge direction
+shows publisher → subscriber. Node color groups each node by which of us
+implemented it, matching the ownership column in the package table above.
 
 ![ROS computation graph, colored by author](figures/ros_graph.png)
 
@@ -233,8 +261,15 @@ to fire in testing.
 
 ![Traced/driven track over the recorded waypoints](figures/track_traced.png)
 
-- `route_on_map.png` / `track_traced.png` (above) — the planned route
-  overlaid on the course map, generated during route-planning development.
+- `route_on_map.png` (above) shows the finished planned route (green)
+  overlaid on the course's top-down map, with the ten predefined goal
+  poses from the task's pose list marked and numbered 0–9 — this is the
+  actual input Section 2.2's goal-selection logic runs against, not a
+  schematic.
+- `track_traced.png` (above) is a closer view of the raw recorded
+  waypoints near the start of the route, captured during route-planning
+  development to check the recording matched the intended path before
+  lane-offset and smoothing were applied.
 
 ## 5. Known Limitations / Requirements Not Fully Met
 

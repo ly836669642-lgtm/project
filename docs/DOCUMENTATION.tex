@@ -27,7 +27,11 @@
 
 This document explains the architecture, design decisions, external
 dependencies, known limitations, and results of our submission. See the
-repository \texttt{README.md} for install/build/run instructions.
+repository \texttt{README.md} for install/build/run instructions, and
+\texttt{DEEP\_DIVE.md} in the same \texttt{docs/} directory for the full
+engineering-detail version of everything below (every algorithm, every
+parameter's exact value and the reasoning behind it, a complete bug
+history, and the performance/testing methodology).
 
 \section{System Overview}
 
@@ -38,6 +42,8 @@ course (\texttt{simulation}, the Unity TCP/UDP bridge, and
 \texttt{dummy\_controller}, an unused reference example) and several
 external ROS libraries:
 
+\begin{figure}[h]
+\centering
 \begin{verbatim}
 Unity sim  <--TCP/UDP-->  simulation (course-provided bridge)
                                 |
@@ -63,10 +69,17 @@ Unity sim  <--TCP/UDP-->  simulation (course-provided bridge)
                                 v
                        /car_command -> simulation -> Unity
 \end{verbatim}
+\caption{High-level node/data-flow architecture. Perception and planning
+  consume the simulator's sensor/pose streams independently and run in
+  parallel; \texttt{control} is the only node that combines their outputs
+  and the sole path to \texttt{/car\_command} --- no other node talks to
+  the simulator directly.}
+\label{fig:architecture}
+\end{figure}
 
 A single launch file (\texttt{bringup/main.launch.py}) starts every node,
-the static TF tree, and RViz. See Section~\ref{sec:rosgraph} for the full
-ROS graph.
+the static TF tree, and RViz. See Section~\ref{sec:rosgraph} for the full,
+auto-generated ROS graph.
 
 \section{Packages and Nodes}
 
@@ -82,7 +95,7 @@ ROS graph.
 \texttt{perception} & Author 2 & \texttt{obstacle\_guard\_node} & Transforms the depth-camera point cloud into the world frame and measures, along the upcoming planned trajectory, the arc-length distance to the nearest obstacle in four corridors (main/tight/overtake-left/overtake-right), plus a supplementary check against an accumulated OctoMap projection for low obstacles (curbs) the live per-frame scan can't see (Section~\ref{sec:control}). \\
 \texttt{perception} & Author 2 & \texttt{traffic\_light\_node} & RGB HSV blob detection of the facing signal head. Deliberately does \textbf{not} use the semantic camera (bonus criterion). \\
 \texttt{planning} & Author 3 & \texttt{route\_planner\_node} & Builds a lane-snapped, curvature-limited-speed trajectory from the recorded waypoints; reactively replans a lateral detour around a confirmed static obstacle; selects the nearest still-ahead goal from the task's predefined pose list. \\
-\texttt{control} & Author 1 & \texttt{pure\_pursuit\_node} & Pure-pursuit path tracking, ACC-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required \texttt{/control/enable} service. \\
+\texttt{control} & Author 1 & \texttt{pure\_pursuit\_node} & Pure-pursuit path tracking, ACC (Adaptive Cruise Control)-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required \texttt{/control/enable} service. \\
 \texttt{bringup} & Author 3 & --- & Single launch file, static TF tree (sensor extrinsics per the task sheet's vehicle drawing), RViz config. \\
 \bottomrule
 \end{tabularx}
@@ -148,30 +161,47 @@ planner for a local detour: a short stretch of the base path is shifted
 sideways just enough to clear the obstacle, then blended smoothly back
 into the original line on either side so the car never has to make an
 abrupt lateral jump. Rather than recomputing the whole route, the planner
-locates the affected stretch directly by searching the path's arc-length
-ordering, which keeps replanning cheap and responsive even as the route
-grows. The detoured section is re-run through the same curvature- and
-acceleration-limited speed profile as the base path, so it stays just as
-driveable. Once the obstacle is reported clear, the planner simply
-reverts to the unmodified base path.
+locates the affected stretch directly by binary-searching the path's
+arc-length ordering, which keeps replanning cheap and responsive even as
+the route grows. The detoured section is re-run through the same
+curvature- and acceleration-limited speed profile as the base path, so it
+stays just as driveable. Once the obstacle is reported clear, the planner
+simply reverts to the unmodified base path.
 
 Independently, the planner continuously tracks the vehicle's progress
 along the route and selects the next short-term goal from the task's
 predefined pose list, publishing whichever goal is nearest ahead of the
 car as it advances. Because the route loops back near itself at a few
-points, the planner uses the vehicle's heading to disambiguate which pass
-through the route it is currently on, avoiding confusion between two
-nearby but unrelated points on the path.
+points, a plain nearest-point search would be ambiguous between two
+nearby but unrelated points on the path; the planner resolves this once,
+at startup, with a heading-filtered search that locks onto the correct
+pass through the route, then stays locked on with a narrow
+position-windowed local search around the last match --- cheaper than
+repeating the heading check on every update, and sufficient once the
+initial ambiguity is resolved.
 
 \subsection{Control}
 \label{sec:control}
 
 \texttt{pure\_pursuit\_node} tracks the published trajectory with a
-standard pure-pursuit lateral law and a throttle law combining a
-feed-forward table (calibrated against the simulator's own speed-tracking
-deficit) with proportional correction. On top of that:
+standard pure-pursuit lateral law --- steering is chosen geometrically
+from a look-ahead point on the path rather than from a PID error term
+\cite{coulter1992} --- and a throttle law combining a feed-forward table
+with proportional correction. The feed-forward table exists because a
+plain proportional throttle law alone settles noticeably below its
+commanded speed at steady state (a textbook proportional-control
+steady-state error against the simulator's own speed-dependent drag);
+the table is calibrated directly against that measured gap at several
+speeds rather than added as an integral term. On top of that:
 
 \begin{itemize}[leftmargin=*]
+\item \textbf{\texttt{/control/enable} service} (\texttt{std\_srvs/SetBool},
+  the project's required self-implemented ROS service) lets an external
+  caller start or stop the vehicle on demand: the node launches holding
+  the brake by default (\texttt{start\_enabled:=false}), and a
+  \texttt{true} call releases it to begin driving. Used, for example, to
+  hold the car at a known simulation state before releasing it for a
+  timed test run.
 \item \textbf{ACC-style gap control} slows for anything in the
   tight/main corridor ahead, with a distance-scaled approach cap.
 \item \textbf{Traffic-light state machine} stops at the correct stop line
@@ -266,9 +296,15 @@ itself been observed to fire in testing.
   straight-line, point-to-point Euclidean sum over 10\,Hz pose samples,
   which undercounts on curves (chord vs.\ arc) --- a measurement-method
   artifact, not a shorter drive.
-\item Figures~\ref{fig:routemap} and \ref{fig:tracktraced} show the
-  planned route overlaid on the course map, generated during
-  route-planning development.
+\item Figure~\ref{fig:routemap} shows the finished planned route (green)
+  overlaid on the course's top-down map, with the ten predefined goal
+  poses from the task's pose list marked and numbered 0--9 --- this is
+  the actual input Section~\ref{sec:detour-goal-selection}'s
+  goal-selection logic runs against, not a schematic. Figure~\ref{fig:tracktraced}
+  is a closer view of the raw recorded waypoints near the start of the
+  route, captured during route-planning development to check the
+  recording matched the intended path before lane-offset and smoothing
+  were applied.
 \end{itemize}
 
 \begin{figure}[h]
@@ -288,14 +324,16 @@ itself been observed to fire in testing.
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.75\textwidth]{route_on_map.png}
-  \caption{Planned route overlaid on the course map.}
+  \caption{Planned route overlaid on the course map, with the ten
+    predefined goal poses (0--9) used for short-term goal selection.}
   \label{fig:routemap}
 \end{figure}
 
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.75\textwidth]{track_traced.png}
-  \caption{Traced track used for waypoint generation.}
+  \caption{Raw recorded waypoints near the route start, checked against
+    the intended path during route-planning development.}
   \label{fig:tracktraced}
 \end{figure}
 
