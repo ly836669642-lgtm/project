@@ -170,7 +170,7 @@ def build():
         ("Planning — decides destinations", 1),
         ("Perception — senses its surrounding environment", 1),
         ("Control — drives the car & reacts in real time", 1),
-        "Benchmark run: 272 s, zero collisions, zero stalls, 1 detour, 2 correct light stops",
+        "Full benchmark run: 272 s, zero collisions, zero stalls, 1 detour, 2 correct red light stops",
         ("Average speed 2.7 m/s, peak 7.5 m/s on the longest straights", 1),
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=19, sub_size=16)
@@ -178,22 +178,24 @@ def build():
     img_left = Inches(7.35)
     img_col_w = Inches(5.5)
     add_picture_fit(s, FIGS / "architecture_illustrated.png", img_left, CONTENT_TOP,
-                     img_col_w, Inches(3.35), "Fig. 1 — Node/data-flow architecture")
+                     img_col_w, Inches(3.35), "Node/data-flow architecture")
+    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(4.85),
+                     img_col_w, Inches(2.1), "Route with 10 predefined goal poses")
 
     set_notes(s,
         "Our car drives a fixed, roughly 785-meter urban loop, using waypoints "
         "published once at startup. We wrote five ROS 2 packages on top of two "
         "provided by the course, and we can think of the system in three layers, "
         "matching Figure 1. Planning decides where the car should go -- both the "
-        "offline base route and live updates like rerouting around obstacles. "
-        "Perception senses the world -- obstacles and traffic lights. And Control "
-        "executes that path and reacts in real time -- steering, speed, and safety "
+        "offline base route and online updates like rerouting around obstacles. "
+        "Perception senses the world, including obstacles and traffic lights. And Control "
+        "executes that path and reacts in real time, like steering, speed, and safety "
         "braking. Perception and planning both feed directly into control, and "
         "control is the only node that talks to the car itself. On the results "
         "side, a full benchmark run completed in 272 seconds with zero collisions, "
         "zero stalls, one obstacle detour, and two red-light stops handled "
         "correctly. Average speed was 2.7 meters per second, peaking at 7.5 on the "
-        "two longest straights. Figure 5 shows the planned route on the course "
+        "two longest straights. The figure below shows the planned route on the course "
         "map, with the ten predefined goal poses our planner selects between."
     )
 
@@ -205,24 +207,21 @@ def build():
         "Offline at startup: smooth base path on the correct side of the road",
         ("sets a safe speed for every turn — tighter turns, lower speed", 1),
         "Online corrections: reactions to the world at the path level:",
-        ("spots a parked obstacle → smoothly reroutes around it, then returns", 1),
+        ("when the perception node flags an obstacle and the control node confirms it's parked", 1),
+        ("→ smoothly reroutes around it, then returns", 1),
         ("continuously picks the next checkpoint to aim for", 1),
-        ("out of 10 fixed goal points placed around the loop", 1),
     ]
-    add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.9), bullets, font_size=19, sub_size=16)
+    add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=23, sub_size=19)
 
-    add_picture_fit(s, FIGS / "route_on_map.png", img_left, Inches(2.6),
-                     img_col_w, Inches(3.0), "Fig. 5 — Route with 10 predefined goal poses")
     set_notes(s,
         "Planning is where the car decides where to go -- both offline and "
         "online. At startup, it builds a smooth base path that stays on the "
-        "correct side of the road and sets a safe speed for every turn -- tighter "
+        "right side of the road and sets a safe speed for every turn, eventually, tighter "
         "turns get lower speeds. But it doesn't stop there: while driving, "
-        "planning also reacts to the world at the path level. If control confirms "
-        "a parked obstacle ahead, planning smoothly reroutes around it and "
-        "returns to the normal path afterward. And it continuously picks the next "
-        "checkpoint to aim for, out of ten fixed goal points placed around the "
-        "loop."
+        "planning also reacts to the world at the path level. When the perception node "
+        "flags an obstacle ahead and the control node confirms it's actually parked, "
+        "planning smoothly reroutes around it and returns to the normal path "
+        "afterward. And it continuously picks the next checkpoint to aim for. "
     )
 
     # ---------------- Slide 4: Perception ----------------
@@ -235,8 +234,7 @@ def build():
         ("ignores ground-level noise, only counts real obstacles", 1),
         ("backup 3D map check catches low, curb-height obstacles the camera misses", 1),
         "Traffic-light detection: RGB camera tells red from green",
-        "Deliberately never uses the labeled (semantic) camera — full bonus earned",
-        "Trade-off: detection updates only ~once a second, limiting safe driving speed",
+        ("Deliberately never uses the labeled (semantic) camera", 1),
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=23, sub_size=19)
 
@@ -248,9 +246,7 @@ def build():
         "ground-level noise and only counts real obstacles, and a backup 3D map "
         "check catches low, curb-height obstacles the live camera might miss. A "
         "traffic-light detector uses color to tell red from green, and "
-        "deliberately never uses the labeled semantic camera, which earns us the "
-        "assignment's full bonus. One trade-off: detection only updates about "
-        "once a second, which limits how fast the car can safely drive."
+        "deliberately never uses the labeled semantic camera. "
     )
 
     # ---------------- Slide 5: Control ----------------
@@ -261,9 +257,8 @@ def build():
         ("Steering aims at a point ahead on the path (classic \"pursuit\" steering)", 1),
         ("Speed follows a safe distance from anything ahead — like adaptive cruise control", 1),
         ("Stops correctly at red lights, resumes on green", 1),
-        "When perception flags a parked obstacle → verifies it's clear, takes a smooth detour",
-        "Independent emergency brake if a collision risk is detected",
-        "Car is ready to drive automatically as soon as it starts up",
+        ("When the perception node flags a parked obstacle → verifies it's clear, takes a smooth detour", 1),
+        ("Independent emergency brake if a collision risk is detected", 1),
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.9), bullets, font_size=23, sub_size=19)
 
@@ -273,41 +268,43 @@ def build():
         "point on the path ahead, a classic and reliable method. Speed follows "
         "adaptive-cruise-control logic, keeping a safe distance from whatever "
         "perception detects ahead. On top of that, it stops correctly at red "
-        "lights, and when perception flags a parked obstacle, control verifies "
+        "lights, and when the perception node flags a parked obstacle, the control node verifies "
         "the path is clear before taking a smooth detour around it. Independent "
         "of everything else, an emergency-brake check runs continuously and stops "
-        "the car immediately if a collision risk is detected. And a simple switch "
-        "means the car is ready to drive automatically as soon as it starts up."
+        "the car immediately if a collision risk is detected. "
     )
 
     # ---------------- Slide 6: Results ----------------
     s = blank_slide(prs)
     add_title(s, "Results")
     bullets = [
+        "Full benchmark run completed successfully: 272 s, zero collisions, zero stalls",
         "Fastest: two longest clear straights, peak 7.5 m/s",
-        "Slowest (near-zero dips): detour spot, TrafficLight2/TrafficLight3 stops, 2 ACC car following slowdowns",
+        "Slowest (near-zero dips): detour spot, TrafficLight2/TrafficLight3 stops, 2 Adaptive Cruise Control (ACC) slowdowns",
         ("ACC dips = Event I (merge) and Event II (crossing + hard brake, s≈531)", 1),
-        "Design choice that mattered: wide-corridor cap 2.5 → 2.5~6.5 m/s ramp",
+        "Design choice 1.: wide-corridor cap 2.5 → 2.5~6.5 m/s ramp",
         ("roadside furniture occupies that corridor 60~90% of route time", 1),
         ("fixed route-wide starvation, not just one segment", 1),
-        "Extra compute is localized to the detour segment (replan + re-profile)",
+        "Design choice 2.: extra compute is localized to the detour segment (replan + re-profile)",
     ]
     add_bullets(s, MARGIN, CONTENT_TOP, Inches(6.6), Inches(5.7), bullets, font_size=19, sub_size=16)
 
     img_left = Inches(7.35)
     img_col_w = Inches(5.5)
     add_picture_fit(s, FIGS / "route_speed_map.png", img_left, CONTENT_TOP,
-                     img_col_w, Inches(3.1), "Fig. 3 — Driven path colored by speed")
+                     img_col_w, Inches(3.1), "Driven path colored by speed")
     add_picture_fit(s, FIGS / "speed_profile.png", img_left, Inches(4.6),
-                     img_col_w, Inches(2.3), "Fig. 4 — Speed vs. distance travelled")
+                     img_col_w, Inches(2.3), "Speed vs. distance travelled")
 
     set_notes(s,
-        "Figure 3 shows our driven path colored by speed, and Figure 4 shows that "
-        "same speed against distance travelled. The fastest segments are the two "
+        "The full benchmark run completed successfully: 272 seconds with zero "
+        "collisions and zero stalls. Figure 3 shows our driven path colored by "
+        "speed, and Figure 4 shows that same speed against the distance that was travelled. "
+        "The fastest segments are the two "
         "longest clear straights, where we peak at 7.5 meters per second. The "
         "near-zero dips mark where we're slower: the detour location, the two "
-        "traffic lights that were red on this run, and two ACC-managed slowdowns "
-        "for the assignment's Event one and Event two encounters. One design "
+        "traffic lights that were red on this run, and two Adaptive Cruise "
+        "Control, or ACC, slowdowns during vehicle merging and emergency brake. One design "
         "choice mattered a lot here: we originally capped wide-corridor speed at a "
         "flat 2.5 meters per second, but roadside furniture sits in that corridor "
         "sixty to ninety percent of route time, so it was starving the whole run. "
