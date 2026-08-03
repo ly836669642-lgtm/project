@@ -18,36 +18,14 @@ ourselves sit on top of two packages provided by the course (`simulation`,
 the Unity TCP/UDP bridge, and `dummy_controller`, an unused reference
 example) and several external ROS libraries:
 
-```
-Unity sim  <--TCP/UDP-->  simulation (course-provided bridge)
-                                |
-                                v
-                    depth image, RGB image, pose, twist
-                                |
-        +-----------------------+------------------------+
-        v                                                 v
-   perception                                          planning
-   (obstacle_guard_node,                          (route_planner_node:
-    traffic_light_node,                            waypoints -> speed
-    + octomap_server for a                          profile -> trajectory,
-    supplementary curb check)                        detour replanning)
-        |                                                 |
-        +-----------------------+------------------------+
-                                v
-                            control
-                    (pure_pursuit_node: path
-                     tracking, ACC, traffic-light
-                     state machine, detour/verify
-                     state machine, emergency stop)
-                                |
-                                v
-                       /car_command -> simulation -> Unity
-```
+![High-level node/data-flow architecture](figures/architecture.png)
 
 *Perception and planning consume the simulator's sensor/pose streams
 independently and run in parallel; `control` is the only node that
 combines their outputs and is the sole path to `/car_command` — no other
-node talks to the simulator directly.*
+node talks to the simulator directly. Colors match the ROS graph in
+Section 3 (yellow = perception, green = planning, blue = control, gray =
+course-provided).*
 
 A single launch file (`bringup/main.launch.py`) starts every node, the
 static TF tree, and RViz. See Section 3 for the full, auto-generated ROS
