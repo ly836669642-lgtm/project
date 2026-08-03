@@ -179,40 +179,78 @@ current mapping; replace with real names before submission.)*
 
 ## 4. Results
 
-A full, uninstrumented run of the finished system (`bringup/main.launch.py`,
-default parameters): **272 s, zero collisions, zero stalls, one detour, two
-red-light stops handled correctly**, matching the same events/timing
-observed across every regression run in this development cycle (the
-detour always engages at the same static obstacle, both traffic lights
-always transition red→green cleanly with no flicker).
+A full run of the finished system (`bringup/main.launch.py`, default
+parameters, telemetry logged for these figures): **272 s, zero
+collisions, zero stalls, one detour, two red-light stops handled
+correctly**. This event pattern — the detour engaging at the same static
+obstacle, TL2 and TL3 each requiring a stop-and-release — has repeated
+identically across every regression run in this development cycle; we
+have not observed it differ.
+
+The route has four signal-controlled stop points in total (TL1–TL4, see
+Section 5); TL2/TL3 have consistently been red on arrival throughout this
+cycle's testing while TL1/TL4 have consistently been green, so no stop
+was needed there. Because phase-on-arrival depends on the real-time sim
+clock at spawn, a differently-timed run could see a different subset of
+the four require a stop — the stop/wait/release logic (Section 2.3)
+applies identically no matter which junction is red, so that would be a
+different *subset firing*, not different behavior from what's documented
+here.
+
+The route also includes the task's Event II encounter (a second vehicle
+crossing, then braking, met on the return leg — Section 2.3): in every
+run where it was checked via saved camera frames, it appears at the same
+location (~s = 531) and is handled by the ACC gap-following logic alone
+(speed easing to ~0.5 m/s, no full stop, no emergency-brake activation) —
+this is one of the near-zero dips below, not a second traffic-light stop.
+The dedicated emergency-stop branch exists as a backstop for a
+closer/faster version of this encounter and has not itself been observed
+to fire in testing.
 
 - Average speed **2.7 m/s**, peak **7.5 m/s** on the two longest clear
   straights.
-- `route_speed_map.png` shows the driven path colored by instantaneous
-  speed — the dark (near-zero) points mark the detour and the two
-  traffic-light stops; speed climbs highest on the long straights on
-  either side of the loop.
-- `speed_profile.png` shows the same data as speed vs. distance travelled:
-  five visible near-zero dips (the detour's approach-and-verify wait plus
-  a couple of ACC-queueing slowdowns, and the two full traffic-light
-  stops), with the car re-accelerating smoothly after each.
+
+![Driven path colored by instantaneous speed](figures/route_speed_map.png)
+
+- `route_speed_map.png` (above) shows the driven path colored by
+  instantaneous speed — the dark (near-zero) points mark the detour, the
+  Event II encounter, and the two traffic-light stops; speed climbs
+  highest on the long straights on either side of the loop.
+
+![Speed vs. distance travelled](figures/speed_profile.png)
+
+- `speed_profile.png` (above) shows the same data as speed vs. distance
+  travelled: five visible near-zero dips — the detour's approach-and-verify
+  wait, two ACC-managed slowdowns (one of them the Event II encounter
+  above), and the two full traffic-light stops — with the car
+  re-accelerating smoothly after each.
 - The distance-travelled axis reads **~721 m** rather than the route's
   documented ~785 m: it's a straight-line, point-to-point Euclidean sum
   over 10 Hz pose samples, which undercounts on curves (chord vs. arc) —
   a measurement-method artifact, not a shorter drive.
-- `route_on_map.png` / `track_traced.png` — the planned route overlaid on
-  the course map, generated during route-planning development.
+
+![Planned route overlaid on the course map](figures/route_on_map.png)
+
+![Traced/driven track over the recorded waypoints](figures/track_traced.png)
+
+- `route_on_map.png` / `track_traced.png` (above) — the planned route
+  overlaid on the course map, generated during route-planning development.
 
 ## 5. Known Limitations / Requirements Not Fully Met
 
 - **TL4 blind-release timing**: this junction's signal head becomes
   detectable only right at the stop line, so the car sometimes has to
   release from the stop without a confirmed-fresh phase reading. The
-  release timer is bounded by the junction's own measured red-phase
-  duration, but the red phase (22 s) is longer than the following
-  green+amber window (14 s) — for *any* fixed-delay timer with no live
-  visibility, there exists an arrival phase-offset where release lands
-  inside the *next* red phase (worst case ~8 s of unavoidable overlap).
+  release timer's 22 s bound comes from a red-phase duration measured
+  directly at TL1 — the one junction whose head stays visible long enough
+  to time a full red cycle — and is assumed, not independently confirmed,
+  to also bound TL4's own red phase, since TL4's head can't be observed
+  early enough to measure its red duration the same way. Even taking that
+  transferred bound at face value, the red phase (22 s) is longer than
+  the following green+amber window (14 s) — for *any* fixed-delay timer
+  with no live visibility, there exists an arrival phase-offset where
+  release lands inside the *next* red phase (worst case ~8 s of
+  unavoidable overlap).
   We removed one avoidable failure mode (a late transient vote extending
   the wait past the intended point) but this residual risk is a physical
   limitation of the intersection's geometry versus its light timing, not

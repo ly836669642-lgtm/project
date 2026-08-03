@@ -219,26 +219,48 @@ deficit) with proportional correction. On top of that:
 
 \section{Results}
 
-A full, uninstrumented run of the finished system
-(\texttt{bringup/main.launch.py}, default parameters): \textbf{272\,s,
-zero collisions, zero stalls, one detour, two red-light stops handled
-correctly}, matching the same events/timing observed across every
-regression run in this development cycle (the detour always engages at
-the same static obstacle, both traffic lights always transition
-red$\to$green cleanly with no flicker).
+A full run of the finished system
+(\texttt{bringup/main.launch.py}, default parameters, telemetry logged
+for these figures): \textbf{272\,s, zero collisions, zero stalls, one
+detour, two red-light stops handled correctly}. This event pattern ---
+the detour engaging at the same static obstacle, TL2 and TL3 each
+requiring a stop-and-release --- has repeated identically across every
+regression run in this development cycle; we have not observed it
+differ.
+
+The route has four signal-controlled stop points in total (TL1--TL4, see
+Section~\ref{sec:limitations}); TL2/TL3 have consistently been red on
+arrival throughout this cycle's testing while TL1/TL4 have consistently
+been green, so no stop was needed there. Because phase-on-arrival depends
+on the real-time sim clock at spawn, a differently-timed run could see a
+different subset of the four require a stop --- the stop/wait/release
+logic (Section~\ref{sec:control}) applies identically no matter which
+junction is red, so that would be a different \emph{subset firing}, not
+different behavior from what is documented here.
+
+The route also includes the task's Event~II encounter (a second vehicle
+crossing, then braking, met on the return leg --- Section~\ref{sec:control}):
+in every run where it was checked via saved camera frames, it appears at
+the same location (\textasciitilde{}s\,=\,531) and is handled by the ACC
+gap-following logic alone (speed easing to \textasciitilde{}0.5\,m/s, no
+full stop, no emergency-brake activation) --- this is one of the
+near-zero dips in Figure~\ref{fig:speedprofile}, not a second
+traffic-light stop. The dedicated emergency-stop branch exists as a
+backstop for a closer/faster version of this encounter and has not
+itself been observed to fire in testing.
 
 \begin{itemize}[leftmargin=*]
 \item Average speed \textbf{2.7\,m/s}, peak \textbf{7.5\,m/s} on the two
   longest clear straights.
 \item Figure~\ref{fig:speedmap} shows the driven path colored by
-  instantaneous speed --- the dark (near-zero) points mark the detour and
-  the two traffic-light stops; speed climbs highest on the long straights
-  on either side of the loop.
+  instantaneous speed --- the dark (near-zero) points mark the detour,
+  the Event~II encounter, and the two traffic-light stops; speed climbs
+  highest on the long straights on either side of the loop.
 \item Figure~\ref{fig:speedprofile} shows the same data as speed vs.\
-  distance travelled: five visible near-zero dips (the detour's
-  approach-and-verify wait plus a couple of ACC-queueing slowdowns, and
-  the two full traffic-light stops), with the car re-accelerating
-  smoothly after each.
+  distance travelled: five visible near-zero dips --- the detour's
+  approach-and-verify wait, two ACC-managed slowdowns (one of them the
+  Event~II encounter above), and the two full traffic-light stops ---
+  with the car re-accelerating smoothly after each.
 \item The distance-travelled axis reads \textbf{\textasciitilde{}721\,m}
   rather than the route's documented \textasciitilde{}785\,m: it's a
   straight-line, point-to-point Euclidean sum over 10\,Hz pose samples,
@@ -284,12 +306,17 @@ red$\to$green cleanly with no flicker).
 \item \textbf{TL4 blind-release timing}: this junction's signal head
   becomes detectable only right at the stop line, so the car sometimes
   has to release from the stop without a confirmed-fresh phase reading.
-  The release timer is bounded by the junction's own measured red-phase
-  duration, but the red phase (22\,s) is longer than the following
-  green+amber window (14\,s) --- for \emph{any} fixed-delay timer with no
-  live visibility, there exists an arrival phase-offset where release
-  lands inside the \emph{next} red phase (worst case \textasciitilde{}8\,s
-  of unavoidable overlap). We removed one avoidable failure mode (a late
+  The release timer's 22\,s bound comes from a red-phase duration
+  measured directly at TL1 --- the one junction whose head stays visible
+  long enough to time a full red cycle --- and is assumed, not
+  independently confirmed, to also bound TL4's own red phase, since
+  TL4's head can't be observed early enough to measure its red duration
+  the same way. Even taking that transferred bound at face value, the
+  red phase (22\,s) is longer than the following green+amber window
+  (14\,s) --- for \emph{any} fixed-delay timer with no live visibility,
+  there exists an arrival phase-offset where release lands inside the
+  \emph{next} red phase (worst case \textasciitilde{}8\,s of unavoidable
+  overlap). We removed one avoidable failure mode (a late
   transient vote extending the wait past the intended point) but this
   residual risk is a physical limitation of the intersection's geometry
   versus its light timing, not something a control-side fix alone can
