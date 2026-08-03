@@ -981,9 +981,9 @@ consolidated list for quick reference.)
 - The OctoMap curb cross-check is safety-bounded and code-reviewed but
   never empirically observed to catch a real curb in testing — Section
   5.7.
-- Perception/corridor update rate (~0.7–1 Hz) is capped by the Unity
-  simulator's own single-core performance, not by anything in this
-  codebase — Section 7.
+- Perception/corridor update rate (~0.7 Hz, 0.67–0.73 Hz measured) is
+  capped by the Unity simulator's own single-core performance, not by
+  anything in this codebase — Section 7.
 - Group-authorship: the git history is dominated by one contributor's
   commits even where multiple people contributed conceptually/in
   discussion — not fixable via code, only via the written summary /
