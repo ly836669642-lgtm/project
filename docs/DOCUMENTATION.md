@@ -270,6 +270,25 @@ independently verified by replicating the README's clone →
   core throughout, not fixable from the ROS side. This caps how much
   cruise speed can be raised before stale-corridor braking becomes
   frequent.
+- **Wide corridor is not hazard-aware**: the wide corridor (Section 2.3)
+  has no way to distinguish an actual hazard from static roadside
+  furniture — guardrails, mast-arm feet, building facades — which
+  occupies it ~60–90% of route time. The distance-scaled approach ramp
+  (replacing an earlier flat cap) softens the resulting caution, but
+  does not remove it: the corridor still slows the car for objects that
+  were never going to enter the lane. This is a plausible contributor to
+  the gap between average speed (2.7 m/s) and the peak reached on clear
+  straights (7.5 m/s), though the two have not been separately isolated
+  by measurement.
+- **Detour replanning is not incremental**: `route_planner_node` locates
+  and shifts the affected arc-length window of a detour in O(log n + k)
+  (Section 2.2.2), but the curvature/speed-profile
+  recompute and full-trajectory republish that follow, plus the
+  arc-length table both `perception` and `control` rebuild on receipt,
+  are all O(n) over the *entire* base route regardless of how small the
+  detour window is. At this route's scale (one detour per run) this has
+  not been observed to cost any measurable time, but the design would
+  not scale to a longer route or a higher-frequency replanning workload.
 
 ## 6. External Code / Not Written by Us
 

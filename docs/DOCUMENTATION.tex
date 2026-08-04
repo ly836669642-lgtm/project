@@ -25,7 +25,7 @@
 }
 
 \title{Autonomous Driving Project --- Documentation}
-\author{TUM ``Introduction to ROS'' 2026 --- Autonomous Driving group project}
+\author{Feng-En Yeh, Zeyun Yan, Yuan Li}
 \date{}
 
 \begin{document}
@@ -35,7 +35,7 @@
   \centering
   {\LARGE\bfseries Autonomous Driving Project --- Documentation\par}
   \vspace{4pt}
-  {\normalsize TUM ``Introduction to ROS'' 2026 --- Autonomous Driving group project\par}
+  {\normalsize TUM ``Introduction to ROS'' 2026 --- Group 10\par}
   \vspace{10pt}
   \begin{minipage}{0.92\textwidth}
   \small
@@ -84,12 +84,12 @@ auto-generated ROS graph.
 \midrule
 \texttt{simulation} & \emph{course-provided} & \texttt{unity\_TCP\_stream\_receiver}\newline\texttt{ROS\_command\_transmitter} & TCP/UDP bridge to Unity: publishes ground-truth pose/twist, camera/IMU data; sends \texttt{VehicleControl} commands. Ported to ROS~2 Jazzy, not otherwise modified. \\
 \texttt{dummy\_controller} & \emph{course-provided} & --- & Minimal example controller from the course. Not used by \texttt{bringup}; kept only for reference. \\
-\texttt{project\_interfaces} & Author 1 & --- & Our custom message types: \texttt{Trajectory}/\texttt{TrajectoryPoint} (planned path with per-point speed) and \texttt{TrafficLight} (detected signal state). \\
-\texttt{perception} & Author 2 & \texttt{obstacle\_guard\_node} & Transforms the depth-camera point cloud into the world frame and measures arc-length distance to the nearest obstacle along the planned trajectory in four corridors (main/tight/overtake-left/overtake-right), plus an OctoMap cross-check for curb-height obstacles the live scan misses (Section~\ref{sec:control}). \\
-\texttt{perception} & Author 2 & \texttt{traffic\_light\_node} & RGB HSV blob detection of the facing signal head. Deliberately does \textbf{not} use the semantic camera (bonus criterion). \\
-\texttt{planning} & Author 3 & \texttt{route\_planner\_node} & Builds a lane-snapped, curvature-limited-speed trajectory from the recorded waypoints; reactively replans a lateral detour around a confirmed static obstacle; selects the nearest still-ahead goal from the task's predefined pose list. \\
-\texttt{control} & Author 1 & \texttt{pure\_pursuit\_node} & Pure-pursuit path tracking, ACC (Adaptive Cruise Control)-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required \texttt{/control/enable} service. \\
-\texttt{bringup} & Author 3 & --- & Single launch file, static TF tree (sensor extrinsics per the task sheet's vehicle drawing), RViz config. \\
+\texttt{project\_interfaces} & Yuan Li & --- & Our custom message types: \texttt{Trajectory}/\texttt{TrajectoryPoint} (planned path with per-point speed) and \texttt{TrafficLight} (detected signal state). \\
+\texttt{perception} & Zeyun Yan & \texttt{obstacle\_guard\_node} & Transforms the depth-camera point cloud into the world frame and measures arc-length distance to the nearest obstacle along the planned trajectory in four corridors (main/tight/overtake-left/overtake-right), plus an OctoMap cross-check for curb-height obstacles the live scan misses (Section~\ref{sec:control}). \\
+\texttt{perception} & Zeyun Yan & \texttt{traffic\_light\_node} & RGB HSV blob detection of the facing signal head. Deliberately does \textbf{not} use the semantic camera (bonus criterion). \\
+\texttt{planning} & Feng-En Yeh & \texttt{route\_planner\_node} & Builds a lane-snapped, curvature-limited-speed trajectory from the recorded waypoints; reactively replans a lateral detour around a confirmed static obstacle; selects the nearest still-ahead goal from the task's predefined pose list. \\
+\texttt{control} & Yuan Li & \texttt{pure\_pursuit\_node} & Pure-pursuit path tracking, ACC (Adaptive Cruise Control)-style gap control, traffic-light stop/go state machine, detour engage/verify/thread/hold state machine, emergency braking. Implements the required \texttt{/control/enable} service. \\
+\texttt{bringup} & Feng-En Yeh & --- & Single launch file, static TF tree (sensor extrinsics per the task sheet's vehicle drawing), RViz config. \\
 \bottomrule
 \end{tabularx}
 \end{table*}
@@ -244,8 +244,7 @@ ownership column.
   \centering
   \includegraphics[width=0.75\textwidth]{ros_graph.png}
   \caption{ROS computation graph, colored by author. Author colors are
-  placeholders --- see the table in Section~2 for the current mapping;
-  replace with real names before submission.}
+  placeholders --- see the table in Section~2 for the current mapping.}
 \end{figure*}
 
 \section{Results}
@@ -362,6 +361,28 @@ does not build or behave as documented).
   render process stayed pinned at 99.5\% CPU on a single core
   throughout, not fixable from the ROS side. This caps how much cruise
   speed can be raised before stale-corridor braking becomes frequent.
+\item \textbf{Wide corridor is not hazard-aware}: the wide corridor
+  (Section~\ref{sec:control}) has no way to distinguish an actual
+  hazard from static roadside furniture --- guardrails, mast-arm feet,
+  building facades --- which occupies it \textasciitilde{}60--90\% of
+  route time. The distance-scaled approach ramp (replacing an earlier
+  flat cap) softens the resulting caution, but does not remove it: the
+  corridor still slows the car for objects that were never going to
+  enter the lane. This is a plausible contributor to the gap between
+  average speed (2.7\,m/s) and the peak reached on clear straights
+  (7.5\,m/s), though the two have not been separately isolated by
+  measurement.
+\item \textbf{Detour replanning is not incremental}:
+  \texttt{route\_planner\_node} locates and shifts the affected
+  arc-length window of a detour in $O(\log n + k)$
+  (Section~\ref{sec:detour-goal-selection}), but the curvature/speed-
+  profile recompute and full-trajectory republish that follow, plus the
+  arc-length table both \texttt{perception} and \texttt{control} rebuild
+  on receipt, are all $O(n)$ over the \emph{entire} base route
+  regardless of how small the detour window is. At this route's scale
+  (one detour per run) this has not been observed to cost any
+  measurable time, but the design would not scale to a longer route or
+  a higher-frequency replanning workload.
 \end{itemize}
 
 \section{External Code / Not Written by Us}
@@ -383,18 +404,15 @@ does not build or behave as documented).
 
 \needspace{4.2cm}
 \section{Team \& Contributions}
-
-\emph{(Placeholder --- replace with real names.)}
-
 \begin{table}[H]
 \footnotesize
 \begin{tabularx}{\columnwidth}{@{}l X@{}}
 \toprule
 \textbf{Author} & \textbf{Contributions} \\
 \midrule
-1 & \texttt{control}: path tracking, ACC, traffic-light/detour state machines, emergency stop, \texttt{/control/enable}; \texttt{project\_interfaces} \\
-2 & \texttt{perception}: corridor monitoring, OctoMap cross-check, HSV traffic-light detection \\
-3 & \texttt{planning}: trajectory gen., detour replanning, goal selection; \texttt{bringup} \\
+Yuan Li & \texttt{control}: path tracking, ACC, traffic-light/detour state machines, emergency stop, \texttt{/control/enable}; \texttt{project\_interfaces} \\
+Zeyun Yan & \texttt{perception}: corridor monitoring, OctoMap cross-check, HSV traffic-light detection \\
+Feng-En Yeh & \texttt{planning}: trajectory gen., detour replanning, goal selection; \texttt{bringup} \\
 \bottomrule
 \end{tabularx}
 \end{table}
